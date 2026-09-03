@@ -468,6 +468,118 @@ function extractDocNo(text){
   if(m) return m[0].toUpperCase();
   return "";
 }
+// Parser gabungan buat baca quotation PDF (dipakai baik oleh Data Penjualan maupun Buat Penawaran)
+function parseQuotationText(fullText){
+  fullText = fullText.replace(/\bI\s*D\s*R\b/gi, "IDR");
+  const lines = fullText.split("\n").map(l=>l.trim());
+
+  let guessedNominal = null;
+  const sectionTotals = [];
+  for(let i=0;i<lines.length;i++){
+    if(/^PPN\b/i.test(lines[i])){
+      for(let j=i+1;j<Math.min(i+3,lines.length);j++){
+        const m = lines[j].match(/Total\s*(?:Value)?\s*(?:IDR)?\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)/i);
+        if(m){ sectionTotals.push(parseIDNumber(m[1])); break; }
+      }
+    }
+  }
+  if(sectionTotals.length){
+    guessedNominal = sectionTotals.reduce((a,b)=>a+b,0);
+  } else {
+    const totalRegex = /\bTOTAL\b(?!\s*VALUE)[^\dRp\n]{0,10}(?:Rp\.?\s*)?([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)/gi;
+    const totalMatches = [...fullText.matchAll(totalRegex)];
+    if(totalMatches.length){
+      const nums = totalMatches.map(m=>parseIDNumber(m[1])).filter(n=>!isNaN(n)&&n>0);
+      if(nums.length) guessedNominal = nums.reduce((a,b)=>a+b,0);
+    }
+  }
+  if(!guessedNominal){
+    const allNums = [...fullText.matchAll(/([\d]{1,3}(?:[.,]\d{3}){2,}(?:[.,]\d{1,2})?)/g)].map(m=>m[1]);
+    const parsed = allNums.map(parseIDNumber).filter(n=>!isNaN(n)&&n>0);
+    if(parsed.length) guessedNominal = Math.max(...parsed);
+  }
+
+  const guessedDocNo = extractDocNo(fullText);
+
+  let guessedType = "Quotation";
+  if(/\bP\.?O\.?\b|\bPURCHASE ORDER\b/i.test(fullText)) guessedType = "PO";
+  else if(/QUOTATION/i.test(fullText)) guessedType = "Quotation";
+
+  let guessedCustomer = "";
+  const custMatch = fullText.match(/CUSTOMER\s*:?\s*([A-Z0-9.,'&\-\s]{5,60}?)(?=\n|ADDRESS|ATTN|REMARKS|MERK|DOC|$)/i);
+  if(custMatch) guessedCustomer = custMatch[1].trim().replace(/\s{2,}/g," ");
+
+  let guessedAddress = "";
+  const LABELS_RE = /\b(?:PHONE|N\.P\.W\.P|DEL\.ADDR|MODEL|REMARKS|FAX|CURR|MERK|DOCUMENT|SERIAL)\b/i;
+  const addrLineIdx = lines.findIndex(l=>/^ADDRESS\s*:?/i.test(l));
+  if(addrLineIdx>-1){
+    let addr = lines[addrLineIdx].replace(/^ADDRESS\s*:?/i,"").trim();
+    const nextLine = lines[addrLineIdx+1];
+    if(nextLine && !/^(BRANCH|CUSTOMER|ADDRESS|PHONE|N\.P\.W\.P|DEL\.ADDR|MODEL|REMARKS|FAX|CURR|MERK|DOCUMENT|SERIAL|NOTE|NO\.)/i.test(nextLine)){
+      addr += " " + nextLine;
+    }
+    addr = addr.split(LABELS_RE)[0];
+    guessedAddress = addr.replace(/[,\s]+$/,"").trim();
+  }
+
+  let guessedDate = "";
+  const docDateMatch = fullText.match(/DOCUMENT\s*DATE\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i);
+  const dateMatch = docDateMatch || fullText.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if(dateMatch){
+    let [_, dd, mm, yy] = dateMatch;
+    if(yy.length===2) yy = "20"+yy;
+    dd = dd.padStart(2,"0"); mm = mm.padStart(2,"0");
+    const candidate = `${yy}-${mm}-${dd}`;
+    if(!isNaN(new Date(candidate).getTime())) guessedDate = candidate;
+  }
+
+  let guessedModel = "";
+  const modelMatch = fullText.match(/\bMODEL\s*:?\s*([A-Z0-9\-]{2,20})/i);
+  if(modelMatch) guessedModel = modelMatch[1].trim().toUpperCase();
+
+  let guessedSN = "";
+  const snMatch = fullText.match(/SERIAL\s*NO\s*:?\s*([A-Z0-9\-]{2,20})/i);
+  if(snMatch) guessedSN = snMatch[1].trim().toUpperCase();
+
+  const rowRegex = /^(\d{1,3})\s+(\d{1,3}\*?)\s+([A-Z0-9][A-Z0-9\-\.\/]{2,24})\s+(.+?)\s+(\d{1,6})\s+([\d.,]{2,})\s+IDR\s+([\d.,]{2,})\s*$/i;
+  const guessedParts = [];
+  for(const line of lines){
+    const m = line.match(rowRegex);
+    if(m){
+      guessedParts.push({
+        partNo: m[3],
+        desc: m[4].trim(),
+        qty: String(Number(m[5])||""),
+        unitPrice: String(parseIDNumber(m[6])||"")
+      });
+    }
+  }
+
+  return { fullText, lines, guessedNominal, sectionTotals, guessedDocNo, guessedType, guessedCustomer, guessedAddress, guessedDate, guessedModel, guessedSN, guessedParts };
+}
+async function readPdfAsText(file){
+  const buf = await file.arrayBuffer();
+  const typedArray = new Uint8Array(buf);
+  const pdf = await window.pdfjsLib.getDocument({data: typedArray}).promise;
+  let fullText = "";
+  for(let i=1;i<=pdf.numPages;i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const lineMap = {};
+    content.items.forEach(item=>{
+      const y = Math.round(item.transform[5]);
+      if(!lineMap[y]) lineMap[y] = [];
+      lineMap[y].push(item);
+    });
+    const lineYs = Object.keys(lineMap).map(Number).sort((a,b)=>b-a);
+    const pageLines = lineYs.map(y=>{
+      const its = lineMap[y].slice().sort((a,b)=>a.transform[4]-b.transform[4]);
+      return its.map(it=>it.str).join(" ").replace(/\s+/g," ").trim();
+    });
+    fullText += pageLines.join("\n") + "\n";
+  }
+  return fullText;
+}
 function formatNominalDisplay(raw){
   if(raw===""||raw==null) return "";
   const n = Number(String(raw).replace(/\D/g,""));
@@ -666,6 +778,7 @@ function MainApp({onDisconnect, binId}){
   const [profileNameDraft,setProfileNameDraft] = useState("");
   const [profileSubDraft,setProfileSubDraft] = useState("");
   const [customers,setCustomers] = useState([]);
+  const [partCatalog,setPartCatalog] = useState({});
   const [entriesByKey,setEntriesByKey] = useState({});
   const [targetByKey,setTargetByKey] = useState({});
   const [loaded,setLoaded] = useState(false);
@@ -729,6 +842,11 @@ function MainApp({onDisconnect, binId}){
   const [quoConsumable,setQuoConsumable] = useState([{desc:"", qty:"", unitPrice:"", remark:""}]);
   const [quoService,setQuoService] = useState([{desc:"", qty:"", unitPrice:"", remark:""}]);
   const [quoManualDiscPct,setQuoManualDiscPct] = useState("0");
+  const [quotationsByKey,setQuotationsByKey] = useState({});
+  const [quoEditingId,setQuoEditingId] = useState(null);
+  const [quoSearch,setQuoSearch] = useState("");
+  const [quoPdfBusy,setQuoPdfBusy] = useState(false);
+  const [quoPdfNote,setQuoPdfNote] = useState("");
 
   const [salesByKey,setSalesByKey] = useState({});
   const [salesTargetByYear,setSalesTargetByYear] = useState({});
@@ -760,6 +878,7 @@ function MainApp({onDisconnect, binId}){
   const saleNoteRef = useRef(null);
   const saveSaleBtnRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const quoPdfInputRef = useRef(null);
   const odoDateRef = useRef(null);
   const odoBeforeRef = useRef(null);
   const odoAfterRef = useRef(null);
@@ -829,12 +948,15 @@ function MainApp({onDisconnect, binId}){
   useEffect(()=>{
     (async()=>{
       try{
-        const res = await window.storage.get("customer_directory");
-        if(res && res.value){ setCustomers(JSON.parse(res.value)); }
+        const cloudData = await window.__jsonbinReadAll();
+        if(cloudData["customer_directory"]){ setCustomers(JSON.parse(cloudData["customer_directory"])); }
         else{
           const seeded = SEED_CUSTOMERS.map((name,i)=>({id:"seed-"+i,name,pic:"",phone:"",active:true}));
           setCustomers(seeded);
-          await window.storage.set("customer_directory", JSON.stringify(seeded));
+          try{ await window.storage.set("customer_directory", JSON.stringify(seeded)); }catch(e2){}
+        }
+        if(cloudData["part_catalog"]){
+          try{ setPartCatalog(JSON.parse(cloudData["part_catalog"])); }catch(e3){}
         }
       }catch(e){
         setCustomers(SEED_CUSTOMERS.map((name,i)=>({id:"seed-"+i,name,pic:"",phone:"",active:true})));
@@ -846,7 +968,7 @@ function MainApp({onDisconnect, binId}){
     (async()=>{
       if(loadedYears[year]) return;
       const quarters = getQuarters(year);
-      const eUpdate = {}, tUpdate = {}, sUpdate = {}, oUpdate = {};
+      const eUpdate = {}, tUpdate = {}, sUpdate = {}, oUpdate = {}, qUpdate = {};
       try{
         // Ambil SEMUA data sekaligus dalam satu kali panggilan ke server (bukan satu-satu per
         // kuartal/jenis data), supaya tidak kena rate-limit dari banyaknya permintaan beruntun
@@ -862,6 +984,8 @@ function MainApp({onDisconnect, binId}){
           catch(e){ sUpdate[key] = []; }
           try{ oUpdate[key] = cloudData["odo_records_"+key] ? JSON.parse(cloudData["odo_records_"+key]) : []; }
           catch(e){ oUpdate[key] = []; }
+          try{ qUpdate[key] = cloudData["quotations_"+key] ? JSON.parse(cloudData["quotations_"+key]) : []; }
+          catch(e){ qUpdate[key] = []; }
         }
         let salesTarget = DEFAULT_SALES_TARGET;
         try{ salesTarget = cloudData["sales_target_"+year]!=null ? Number(cloudData["sales_target_"+year]) : DEFAULT_SALES_TARGET; }
@@ -870,6 +994,7 @@ function MainApp({onDisconnect, binId}){
         setTargetByKey(prev=>({...prev,...tUpdate}));
         setSalesByKey(prev=>({...prev,...sUpdate}));
         setOdoByKey(prev=>({...prev,...oUpdate}));
+        setQuotationsByKey(prev=>({...prev,...qUpdate}));
         setSalesTargetByYear(prev=>({...prev,[year]:salesTarget}));
       }catch(e){
         setErr("Gagal memuat data tahun "+year+" dari cloud. Detail: " + (e && e.message ? e.message : String(e)));
@@ -922,6 +1047,50 @@ function MainApp({onDisconnect, binId}){
     setCustomers(next);
     try{ await window.storage.set("customer_directory", JSON.stringify(next)); }
     catch(e){ setErr("Gagal menyimpan data customer. Detail: " + (e && e.message ? e.message : String(e))); }
+  };
+  const mergePartsIntoCatalog = async(partsArray, dateStr)=>{
+    if(!partsArray || partsArray.length===0) return;
+    setPartCatalog(prev=>{
+      const next = {...prev};
+      partsArray.forEach(p=>{
+        const pk = (p.partNo||"").trim();
+        if(!pk) return;
+        const existing = next[pk];
+        if(!existing || (dateStr && (!existing.lastDate || dateStr>=existing.lastDate))){
+          next[pk] = {
+            desc: p.desc || (existing?existing.desc:""),
+            unitPrice: Number(p.unitPrice)||(existing?existing.unitPrice:0),
+            lastDate: dateStr || (existing?existing.lastDate:"")
+          };
+        }
+      });
+      window.storage.set("part_catalog", JSON.stringify(next)).catch(()=>{});
+      return next;
+    });
+  };
+  const persistQuotationsForQ = async(key, next)=>{
+    setQuotationsByKey(prev=>({...prev,[key]:next}));
+    try{ await window.storage.set("quotations_"+key, JSON.stringify(next)); }
+    catch(e){ setErr("Gagal menyimpan penawaran. Detail: " + (e && e.message ? e.message : String(e))); }
+  };
+  const persistQuotationToItsQuarter = async(quoObj, dateStr)=>{
+    const q = quarterKeyForDate(dateStr);
+    let base;
+    if(q.year===year){
+      base = quotationsByKey[q.key] || [];
+    } else {
+      try{
+        const r = await window.storage.get("quotations_"+q.key);
+        base = (r && r.value) ? JSON.parse(r.value) : [];
+      }catch(e){ base = []; }
+    }
+    const next = [quoObj, ...base.filter(x=>x.id!==quoObj.id)];
+    setQuotationsByKey(prev=>({...prev,[q.key]:next}));
+    try{ await window.storage.set("quotations_"+q.key, JSON.stringify(next)); }
+    catch(e){ setErr("Gagal menyimpan penawaran. Detail: " + (e && e.message ? e.message : String(e))); return; }
+    if(q.key!==qKey){
+      setInfo(`Penawaran tersimpan otomatis ke ${q.qId} ${q.year} sesuai tanggal dokumennya.`);
+    }
   };
   const persistEntriesForQ = async(key, next)=>{
     setEntriesByKey(prev=>({...prev,[key]:next}));
@@ -1138,6 +1307,7 @@ function MainApp({onDisconnect, binId}){
       docType:saleType, nominal:nominalNum, note:saleNote.trim(), parts:cleanParts
     };
     persistSaleToItsQuarter(entryObj, saleDate);
+    mergePartsIntoCatalog(cleanParts, saleDate);
     setSaleCustomer(""); setSaleDocNo(""); setSaleNominal(""); setSaleNote(""); setSaleParts([]);
     setPdfNote("");
     setTimeout(()=>{ saleCustomerRef.current && saleCustomerRef.current.focus(); }, 0);
@@ -1179,6 +1349,7 @@ function MainApp({onDisconnect, binId}){
       await persistSalesForQ(newQ.key, [updated, ...destBase]);
       setInfo(`Penjualan dipindahkan otomatis ke ${newQ.qId} ${newQ.year} sesuai tanggal barunya.`);
     }
+    mergePartsIntoCatalog(cleanParts, editSaleDate);
     setEditSaleId(null);
   };
   const addEditSalePartRow = ()=> setEditSaleParts(prev=>[...prev, {partNo:"", desc:"", qty:"", unitPrice:""}]);
@@ -1190,143 +1361,38 @@ function MainApp({onDisconnect, binId}){
     setErr(""); setPdfNote("");
     if(!window.pdfjsLib){ setErr("Modul pembaca PDF belum siap, coba lagi sebentar."); return; }
     setPdfBusy(true);
-    const reader = new FileReader();
-    reader.onload = async(ev)=>{
+    (async()=>{
       try{
-        const typedArray = new Uint8Array(ev.target.result);
-        const pdf = await window.pdfjsLib.getDocument({data: typedArray}).promise;
-        let fullText = "";
-        for(let i=1;i<=pdf.numPages;i++){
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          // Kelompokkan item teks per baris berdasarkan posisi Y, supaya struktur baris/tabel
-          // di PDF tidak hilang jadi satu blok teks panjang (penting untuk baca tabel part).
-          const lineMap = {};
-          content.items.forEach(item=>{
-            const y = Math.round(item.transform[5]);
-            if(!lineMap[y]) lineMap[y] = [];
-            lineMap[y].push(item);
-          });
-          const lineYs = Object.keys(lineMap).map(Number).sort((a,b)=>b-a);
-          const pageLines = lineYs.map(y=>{
-            const its = lineMap[y].slice().sort((a,b)=>a.transform[4]-b.transform[4]);
-            return its.map(it=>it.str).join(" ").replace(/\s+/g," ").trim();
-          });
-          fullText += pageLines.join("\n") + "\n";
-        }
-        // Normalisasi "IDR" yang kadang terbaca terpisah jadi "ID R" oleh pembaca PDF
-        fullText = fullText.replace(/\bI\s*D\s*R\b/gi, "IDR");
-        const lines = fullText.split("\n").map(l=>l.trim());
+        const fullText = await readPdfAsText(file);
+        const R = parseQuotationText(fullText);
 
-        // Total akhir: cari baris "PPN", ambil angka di baris "Total"/"TOTAL" tepat setelahnya.
-        // Ini menangani format resmi BMP dimana label "Total Value" dipakai baik untuk subtotal
-        // (sebelum diskon) MAUPUN total akhir (setelah diskon+PPN) — jadi tidak bisa asal ambil
-        // baris "Total" pertama yang ketemu, harus yang berada tepat setelah baris PPN.
-        let guessedNominal = null;
-        const sectionTotals = [];
-        for(let i=0;i<lines.length;i++){
-          if(/^PPN\b/i.test(lines[i])){
-            for(let j=i+1;j<Math.min(i+3,lines.length);j++){
-              const m = lines[j].match(/Total\s*(?:Value)?\s*(?:IDR)?\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)/i);
-              if(m){ sectionTotals.push(parseIDNumber(m[1])); break; }
-            }
-          }
-        }
-        if(sectionTotals.length){
-          guessedNominal = sectionTotals.reduce((a,b)=>a+b,0);
-        } else {
-          // Fallback kalau tidak ada baris PPN terdeteksi (mis. dokumen non-PPN)
-          const totalRegex = /\bTOTAL\b(?!\s*VALUE)[^\dRp\n]{0,10}(?:Rp\.?\s*)?([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)/gi;
-          const totalMatches = [...fullText.matchAll(totalRegex)];
-          if(totalMatches.length){
-            const nums = totalMatches.map(m=>parseIDNumber(m[1])).filter(n=>!isNaN(n)&&n>0);
-            if(nums.length) guessedNominal = nums.reduce((a,b)=>a+b,0);
-          }
-        }
-        if(!guessedNominal){
-          const allNums = [...fullText.matchAll(/([\d]{1,3}(?:[.,]\d{3}){2,}(?:[.,]\d{1,2})?)/g)].map(m=>m[1]);
-          const parsed = allNums.map(parseIDNumber).filter(n=>!isNaN(n)&&n>0);
-          if(parsed.length) guessedNominal = Math.max(...parsed);
-        }
-
-        const guessedDocNo = extractDocNo(fullText);
-
-        let guessedType = "Quotation";
-        if(/\bP\.?O\.?\b|\bPURCHASE ORDER\b/i.test(fullText)) guessedType = "PO";
-        else if(/QUOTATION/i.test(fullText)) guessedType = "Quotation";
-
-        let guessedCustomer = "";
-        const custMatch = fullText.match(/CUSTOMER\s*:?\s*([A-Z0-9.,'&\-\s]{5,60}?)(?=\n|ADDRESS|ATTN|REMARKS|MERK|DOC|$)/i);
-        if(custMatch) guessedCustomer = custMatch[1].trim().replace(/\s{2,}/g," ");
-
-        // Ekstrak alamat: ambil teks setelah "ADDRESS", termasuk baris lanjutan kalau ada,
-        // lalu potong kalau ada label lain (PHONE/MODEL/dst) yang nyambung di baris yang sama.
-        let guessedAddress = "";
-        const LABELS_RE = /\b(?:PHONE|N\.P\.W\.P|DEL\.ADDR|MODEL|REMARKS|FAX|CURR|MERK|DOCUMENT|SERIAL)\b/i;
-        const addrLineIdx = lines.findIndex(l=>/^ADDRESS\s*:?/i.test(l));
-        if(addrLineIdx>-1){
-          let addr = lines[addrLineIdx].replace(/^ADDRESS\s*:?/i,"").trim();
-          const nextLine = lines[addrLineIdx+1];
-          if(nextLine && !/^(BRANCH|CUSTOMER|ADDRESS|PHONE|N\.P\.W\.P|DEL\.ADDR|MODEL|REMARKS|FAX|CURR|MERK|DOCUMENT|SERIAL|NOTE|NO\.)/i.test(nextLine)){
-            addr += " " + nextLine;
-          }
-          addr = addr.split(LABELS_RE)[0];
-          guessedAddress = addr.replace(/[,\s]+$/,"").trim();
-        }
-
-        let guessedDate = "";
-        const docDateMatch = fullText.match(/DOCUMENT\s*DATE\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i);
-        const dateMatch = docDateMatch || fullText.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-        if(dateMatch){
-          let [_, dd, mm, yy] = dateMatch;
-          if(yy.length===2) yy = "20"+yy;
-          dd = dd.padStart(2,"0"); mm = mm.padStart(2,"0");
-          const candidate = `${yy}-${mm}-${dd}`;
-          if(!isNaN(new Date(candidate).getTime())) guessedDate = candidate;
-        }
-
-        // Baca tabel rincian part: No | AGC | Part Number | Description | Qty | Unit Price | IDR | Ext.Price
-        const rowRegex = /^(\d{1,3})\s+(\d{1,3}\*?)\s+([A-Z0-9][A-Z0-9\-\.\/]{2,24})\s+(.+?)\s+(\d{1,6})\s+([\d.,]{2,})\s+IDR\s+([\d.,]{2,})\s*$/i;
-        const guessedParts = [];
-        for(const line of lines){
-          const m = line.match(rowRegex);
-          if(m){
-            guessedParts.push({
-              partNo: m[3],
-              desc: m[4].trim(),
-              qty: String(Number(m[5])||""),
-              unitPrice: String(parseIDNumber(m[6])||"")
-            });
-          }
-        }
-
-        if(guessedDate) setSaleDate(guessedDate);
-        if(guessedCustomer) setSaleCustomer(guessedCustomer);
-        if(guessedDocNo) setSaleDocNo(guessedDocNo);
-        if(guessedType) setSaleType(guessedType);
-        if(guessedNominal) setSaleNominal(String(guessedNominal));
-        if(guessedParts.length) setSaleParts(guessedParts);
+        if(R.guessedDate) setSaleDate(R.guessedDate);
+        if(R.guessedCustomer) setSaleCustomer(R.guessedCustomer);
+        if(R.guessedDocNo) setSaleDocNo(R.guessedDocNo);
+        if(R.guessedType) setSaleType(R.guessedType);
+        if(R.guessedNominal) setSaleNominal(String(R.guessedNominal));
+        if(R.guessedParts.length) setSaleParts(R.guessedParts);
 
         let addressSaved = false;
-        if(guessedAddress && guessedCustomer){
+        if(R.guessedAddress && R.guessedCustomer){
           const norm = s=> (s||"").replace(/^[A-Z]\d{4,6}-/,"").trim().toUpperCase().replace(/\s+/g," ");
-          const gcNorm = norm(guessedCustomer);
+          const gcNorm = norm(R.guessedCustomer);
           const matchedCust = customers.find(c=>{
             const cn = norm(c.name);
             return cn===gcNorm || cn.includes(gcNorm) || gcNorm.includes(cn);
           });
-          if(matchedCust && matchedCust.address!==guessedAddress){
-            persistCustomers(customers.map(c=> c.id===matchedCust.id ? {...c, address:guessedAddress} : c));
+          if(matchedCust && matchedCust.address!==R.guessedAddress){
+            persistCustomers(customers.map(c=> c.id===matchedCust.id ? {...c, address:R.guessedAddress} : c));
             addressSaved = true;
           }
         }
 
         const foundParts = [];
-        if(guessedNominal) foundParts.push(sectionTotals.length>1 ? `nominal (jumlah ${sectionTotals.length} baris total per-section, setelah diskon & PPN)` : "nominal (setelah diskon & PPN)");
-        if(guessedDocNo) foundParts.push("no. dokumen");
-        if(guessedCustomer) foundParts.push("customer");
-        if(guessedDate) foundParts.push("tanggal");
-        if(guessedParts.length) foundParts.push(`rincian part (${guessedParts.length} baris, harga satuan sebelum diskon)`);
+        if(R.guessedNominal) foundParts.push(R.sectionTotals.length>1 ? `nominal (jumlah ${R.sectionTotals.length} baris total per-section, setelah diskon & PPN)` : "nominal (setelah diskon & PPN)");
+        if(R.guessedDocNo) foundParts.push("no. dokumen");
+        if(R.guessedCustomer) foundParts.push("customer");
+        if(R.guessedDate) foundParts.push("tanggal");
+        if(R.guessedParts.length) foundParts.push(`rincian part (${R.guessedParts.length} baris, harga satuan sebelum diskon)`);
         if(addressSaved) foundParts.push("alamat customer (tersimpan otomatis untuk Buat Penawaran)");
         setPdfNote(foundParts.length
           ? `Berhasil menebak: ${foundParts.join(", ")} dari file "${file.name}". Ini hasil baca otomatis, mohon dicek ulang sebelum disimpan — file PDF-nya sendiri tidak ikut tersimpan di tracker ini.`
@@ -1337,9 +1403,69 @@ function MainApp({onDisconnect, binId}){
         setPdfBusy(false);
         if(pdfInputRef.current) pdfInputRef.current.value = "";
       }
-    };
-    reader.readAsArrayBuffer(file);
+    })();
   };
+
+  const extractQuotationPdf = (file)=>{
+    setErr(""); setQuoPdfNote("");
+    if(!window.pdfjsLib){ setErr("Modul pembaca PDF belum siap, coba lagi sebentar."); return; }
+    setQuoPdfBusy(true);
+    (async()=>{
+      try{
+        const fullText = await readPdfAsText(file);
+        const R = parseQuotationText(fullText);
+
+        if(R.guessedDocNo) setQuoDocNo(R.guessedDocNo);
+        if(R.guessedDate) setQuoDocDate(R.guessedDate);
+        if(R.guessedCustomer) setQuoCustomerName(R.guessedCustomer);
+        if(R.guessedAddress) setQuoAddress(R.guessedAddress);
+        if(R.guessedModel) setQuoModel(R.guessedModel);
+        if(R.guessedSN) setQuoSN(R.guessedSN);
+
+        // Cari customer yang sudah terdaftar biar telepon & PIC ikut otomatis kalau cocok
+        if(R.guessedCustomer){
+          const norm = s=> (s||"").replace(/^[A-Z]\d{4,6}-/,"").trim().toUpperCase().replace(/\s+/g," ");
+          const gcNorm = norm(R.guessedCustomer);
+          const matchedCust = customers.find(c=>{
+            const cn = norm(c.name);
+            return cn===gcNorm || cn.includes(gcNorm) || gcNorm.includes(cn);
+          });
+          if(matchedCust){
+            setQuoCustomerId(matchedCust.id);
+            if(matchedCust.phone) setQuoPhone(matchedCust.phone);
+            if(matchedCust.pic) setQuoAttn("ATTN "+matchedCust.pic);
+            if(matchedCust.address && !R.guessedAddress) setQuoAddress(matchedCust.address);
+          }
+        }
+
+        if(R.guessedParts.length){
+          if(quoFormat==="ais"){
+            setQuoAisRows(R.guessedParts.map(p=>({agc:"24", desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice})));
+          } else {
+            setQuoSpareParts(R.guessedParts.map(p=>({desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, remark:""})));
+          }
+          mergePartsIntoCatalog(R.guessedParts, R.guessedDate);
+        }
+
+        const foundParts = [];
+        if(R.guessedDocNo) foundParts.push("no. dokumen");
+        if(R.guessedDate) foundParts.push("tanggal");
+        if(R.guessedCustomer) foundParts.push("customer & alamat");
+        if(R.guessedModel) foundParts.push("model");
+        if(R.guessedSN) foundParts.push("serial number");
+        if(R.guessedParts.length) foundParts.push(`rincian part (${R.guessedParts.length} baris)`);
+        setQuoPdfNote(foundParts.length
+          ? `Berhasil menebak: ${foundParts.join(", ")} dari file "${file.name}". Mohon dicek ulang sebelum disimpan/export — file PDF-nya sendiri tidak ikut tersimpan.`
+          : `Tidak berhasil menebak data dari "${file.name}". Silakan isi manual.`);
+      }catch(e){
+        setErr("Gagal membaca PDF. Detail: " + (e && e.message ? e.message : String(e)));
+      }finally{
+        setQuoPdfBusy(false);
+        if(quoPdfInputRef.current) quoPdfInputRef.current.value = "";
+      }
+    })();
+  };
+
 
   const today = new Date();
   const visitCount = entries.filter(e=>e.type==="visit").length;
@@ -1474,6 +1600,11 @@ function MainApp({onDisconnect, binId}){
   // saat bikin penawaran baru - diambil dari rincian part yang tersimpan di Data Penjualan.
   const knownParts = useMemo(()=>{
     const map = {};
+    // Sumber 1: katalog global (part yang pernah diketik di Data Penjualan ATAU Buat Penawaran)
+    Object.keys(partCatalog).forEach(pk=>{
+      map[pk] = {partNo:pk, desc:partCatalog[pk].desc||"", unitPrice:Number(partCatalog[pk].unitPrice)||0, lastDate:partCatalog[pk].lastDate||""};
+    });
+    // Sumber 2: histori Data Penjualan yang sudah termuat (jaga-jaga ada part lama sebelum katalog global ada)
     Object.values(salesByKey).forEach(arr=>{
       (arr||[]).forEach(s=>{
         (s.parts||[]).forEach(p=>{
@@ -1486,7 +1617,7 @@ function MainApp({onDisconnect, binId}){
       });
     });
     return Object.values(map).sort((a,b)=> a.partNo.localeCompare(b.partNo));
-  },[salesByKey]);
+  },[salesByKey, partCatalog]);
   const findKnownPart = (partNo)=> knownParts.find(p=>p.partNo.toUpperCase()===String(partNo||"").trim().toUpperCase());
   // Cocokkan dari teks gabungan "PN, Nama" atau cuma PN doang -> ambil bagian sebelum koma sebagai PN
   const findKnownPartFromCombined = (text)=>{
@@ -1577,6 +1708,67 @@ function MainApp({onDisconnect, binId}){
     window.addEventListener("afterprint", restoreTitle);
     window.print();
   };
+
+  // ===== Riwayat Penawaran: simpan / muat untuk edit / hapus =====
+  const buildQuotationObj = ()=>({
+    id: quoEditingId || Date.now(),
+    format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
+    customerName: quoCustomerName.trim(), address: quoAddress.trim(), phone: quoPhone.trim(),
+    attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
+    custPoNo: quoCustPoNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct,
+    aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
+    totalAll: quoFormat==="ais" ? Math.round(quoAisCalc.total) : Math.round(quoManualCalc.spareParts.total+quoManualCalc.consumable.total+quoManualCalc.service.total),
+    savedAt: new Date().toISOString()
+  });
+  const saveQuotation = ()=>{
+    if(!quoDocNo.trim()){ setErr("Isi No. Dokumen dulu sebelum menyimpan penawaran."); return; }
+    if(!quoDocDate){ setErr("Isi Tanggal Dokumen dulu sebelum menyimpan penawaran."); return; }
+    setErr("");
+    const obj = buildQuotationObj();
+    persistQuotationToItsQuarter(obj, quoDocDate);
+    setQuoEditingId(obj.id);
+    // Sekalian pelajari part-nya biar bisa direkomendasikan di penawaran berikutnya
+    const partsToLearn = quoFormat==="ais"
+      ? quoAisCalc.rows.map(r=>({partNo:(r.desc||"").split(",")[0].trim(), desc:(r.desc||"").split(",").slice(1).join(",").trim(), unitPrice:r.priceNum}))
+      : quoManualCalc.spareParts.rows.map(r=>({partNo:(r.desc||"").split(",")[0].trim(), desc:(r.desc||"").split(",").slice(1).join(",").trim(), unitPrice:r.priceNum}));
+    mergePartsIntoCatalog(partsToLearn.filter(p=>p.partNo), quoDocDate);
+    setInfo("Penawaran "+obj.docNo+" berhasil disimpan ke Riwayat Penawaran.");
+  };
+  const loadQuotationForEdit = (q)=>{
+    setQuoEditingId(q.id);
+    setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||new Date().toISOString().slice(0,10));
+    setQuoCustomerName(q.customerName||""); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
+    setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"MITSUBISHI");
+    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0");
+    setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
+    setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
+    setQuoConsumable(q.consumable && q.consumable.length ? q.consumable : [{desc:"", qty:"", unitPrice:"", remark:""}]);
+    setQuoService(q.service && q.service.length ? q.service : [{desc:"", qty:"", unitPrice:"", remark:""}]);
+    setInfo("Memuat penawaran "+q.docNo+" untuk diedit.");
+    window.scrollTo({top:0, behavior:"smooth"});
+  };
+  const newQuotation = ()=>{
+    setQuoEditingId(null);
+    setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
+    setQuoAttn(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT");
+    setQuoDiscPct("0"); setQuoManualDiscPct("0");
+    setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
+    setQuoSpareParts([{desc:"", qty:"", unitPrice:"", remark:""}]);
+    setQuoConsumable([{desc:"", qty:"", unitPrice:"", remark:""}]);
+    setQuoService([{desc:"", qty:"", unitPrice:"", remark:""}]);
+    setValidationResult(null);
+  };
+  const deleteQuotation = (q)=>{
+    if(!window.confirm("Hapus penawaran "+q.docNo+" dari riwayat? Tindakan ini tidak bisa dibatalkan.")) return;
+    persistQuotationsForQ(qKey, (quotationsByKey[qKey]||[]).filter(x=>x.id!==q.id));
+    if(quoEditingId===q.id) newQuotation();
+  };
+  const quotationsThisQ = quotationsByKey[qKey] || [];
+  const quoSearchClean = quoSearch.trim().toLowerCase();
+  const quotationsFiltered = quoSearchClean
+    ? quotationsThisQ.filter(q=> (q.docNo||"").toLowerCase().includes(quoSearchClean) || (q.customerName||"").toLowerCase().includes(quoSearchClean))
+    : quotationsThisQ;
+  const quotationsSorted = [...quotationsFiltered].sort((a,b)=> (b.savedAt||"").localeCompare(a.savedAt||""));
 
   // ===== Cek Validasi Kalkulasi (logika lokal, instan, tanpa API luar) =====
   const [validationResult,setValidationResult] = useState(null);
@@ -2558,13 +2750,31 @@ function MainApp({onDisconnect, binId}){
       {mainView==="quotation" && (
         <React.Fragment>
           <h2 className="section" style={{marginTop:0}}>Buat Penawaran (Quotation)</h2>
-          {knownParts.length===0 && (
-            <div className="extract-note" style={{marginBottom:14}}>
-              Belum ada riwayat "Rincian Part" tersimpan, jadi Nama Part & Harga belum bisa terisi otomatis. Isi manual dulu format "No.Part, Nama Part" — setelah transaksi ini disimpan lewat Data Penjualan (dengan Rincian Part diisi), part-nya akan dikenali otomatis untuk penawaran berikutnya.
+
+          <div className="upload-row no-print">
+            <label className="upload-btn" htmlFor="quoPdfUploadInput">
+              {quoPdfBusy ? "Membaca PDF..." : "\u2191 Upload PDF Penawaran Asli (AIS/Manual)"}
+            </label>
+            <input ref={quoPdfInputRef} id="quoPdfUploadInput" type="file" accept=".pdf,application/pdf" style={{display:"none"}}
+              onChange={e=>{ const f = e.target.files && e.target.files[0]; if(f) extractQuotationPdf(f); }} disabled={quoPdfBusy} />
+            {quoEditingId && (
+              <button className="icon-btn" onClick={newQuotation} style={{marginLeft:8}}>+ Penawaran Baru</button>
+            )}
+          </div>
+          {quoPdfNote && <div className="extract-note">{quoPdfNote}</div>}
+          {quoEditingId && (
+            <div className="extract-note" style={{color:"var(--blue)",fontStyle:"normal",fontWeight:700}}>
+              Sedang mengedit penawaran tersimpan: {quoDocNo || "(belum ada No. Dokumen)"}
             </div>
           )}
 
-          <div className="type-toggle" style={{maxWidth:420,marginBottom:18}}>
+          {knownParts.length===0 && (
+            <div className="extract-note" style={{marginBottom:14}}>
+              Belum ada riwayat "Rincian Part" tersimpan, jadi Nama Part & Harga belum bisa terisi otomatis. Isi manual dulu format "No.Part, Nama Part" — setelah transaksi ini disimpan lewat Data Penjualan atau lewat Simpan Penawaran, part-nya akan dikenali otomatis untuk penawaran berikutnya.
+            </div>
+          )}
+
+          <div className="type-toggle no-print" style={{maxWidth:420,marginBottom:18}}>
             <div className={"type-btn"+(quoFormat==="ais"?" active-visit":"")} onClick={()=>setQuoFormat("ais")}>Format AIS System</div>
             <div className={"type-btn"+(quoFormat==="manual"?" active-call":"")} onClick={()=>setQuoFormat("manual")}>Format Manual BMP</div>
           </div>
@@ -2699,6 +2909,7 @@ function MainApp({onDisconnect, binId}){
 
           <div className="no-print" style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
             <button className="add-btn" style={{marginBottom:0}} onClick={exportQuotationToPdf}>Export ke PDF</button>
+            <button className="icon-btn" onClick={saveQuotation}>{quoEditingId ? "Update Penawaran Tersimpan" : "Simpan Penawaran"}</button>
             <button className="icon-btn" onClick={runValidation}>Cek Validasi Kalkulasi</button>
           </div>
 
@@ -2735,6 +2946,33 @@ function MainApp({onDisconnect, binId}){
               <div style={{fontFamily:"var(--sans)",fontSize:11.5,fontWeight:700,marginBottom:4}}>Subject: {draftTexts.emailSubject}</div>
               <textarea readOnly value={draftTexts.emailBody} rows={12} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"var(--paper-raise)"}} onFocus={e=>e.target.select()} />
             </div>
+          </div>
+
+          <div className="no-print">
+            <h2 className="section" style={{marginBottom:10}}>Riwayat Penawaran — {quarter.label}</h2>
+            <div style={{marginBottom:12}}>
+              <label>Cari No. Dokumen / Customer</label>
+              <input type="text" value={quoSearch} onChange={e=>setQuoSearch(e.target.value)} placeholder="mis. PQ06682 atau Bangun Mitra" />
+            </div>
+            {quotationsSorted.length===0 ? (
+              <div className="empty">{quoSearchClean ? "Tidak ada penawaran yang cocok." : "Belum ada penawaran tersimpan di kuartal ini. Klik \"Simpan Penawaran\" setelah mengisi form untuk menambah ke riwayat."}</div>
+            ) : (
+              <div style={{maxHeight:420,overflowY:"auto"}}>
+                {quotationsSorted.map(q=>(
+                  <div className="entry" key={q.id}>
+                    <span className={"tag "+(q.format==="ais"?"visit":"call")}>{q.format==="ais"?"AIS":"Manual"}</span>
+                    <span className="name">
+                      {q.docNo || "(tanpa No. Dokumen)"}
+                      <span className="meta"> — {q.customerName||"-"}</span>
+                      <span className="meta"> — {formatRupiah(q.totalAll)}</span>
+                    </span>
+                    <span className="date">{q.docDate ? new Date(q.docDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'short'}) : ""}</span>
+                    <span className="icon-btn" style={{fontSize:11,padding:"3px 8px"}} onClick={()=>loadQuotationForEdit(q)}>Edit</span>
+                    <span className="del" onClick={()=>deleteQuotation(q)}>&times;</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <h2 className="section no-print">Preview</h2>
@@ -2893,7 +3131,17 @@ function MainApp({onDisconnect, binId}){
 
           <div className="faq-item">
             <h3>Bagaimana cara membuat Penawaran (Quotation) dan kirim ke customer?</h3>
-            <p>Buka tab <strong>"Buat Penawaran"</strong>. Pilih format dulu: <strong>Format AIS System</strong> (satu tabel, kolom AGC/Part Number, meniru cetakan sistem AIS) atau <strong>Format Manual BMP</strong> (3 bagian: SPARE PARTS, CONSUMABLE/COMMODITY, SERVICE — cocok kalau ada jasa service sekalian, sesuai template resmi BMP). Pilih customer terdaftar untuk auto-isi alamat & telepon (kalau belum ada alamatnya, isi manual atau upload dulu PDF quotation customer itu di Data Penjualan supaya alamatnya kesimpan otomatis untuk dipakai berikutnya). Saat mengetik No. Part, akan muncul saran otomatis dari part yang pernah terjual sebelumnya lengkap dengan harga satuannya. Setelah semua terisi, klik <strong>"Export ke PDF"</strong> — nanti muncul kotak dialog cetak/print bawaan browser, pilih <strong>"Save as PDF"</strong> (di HP biasanya juga ada opsi ini) untuk menyimpan filenya, siap dikirim ke customer.</p>
+            <p>Buka tab <strong>"Buat Penawaran"</strong>. Cara paling cepat: klik <strong>"Upload PDF Penawaran Asli"</strong> dan pilih file PDF quotation yang sudah pernah terbit (dari sistem AIS atau format manual) — No. Dokumen, Tanggal, Customer, Alamat, Model, Serial Number, dan semua Rincian Part otomatis terisi. Atau isi manual: pilih format dulu (<strong>AIS System</strong> satu tabel, atau <strong>Manual BMP</strong> 3 bagian Spare Parts/Consumable/Service). Setelah terisi, klik <strong>"Simpan Penawaran"</strong> supaya masuk ke Riwayat Penawaran (bisa dicari & diedit lagi kapan saja), lalu <strong>"Export ke PDF"</strong> untuk mencetak — nanti muncul dialog print bawaan browser, pilih "Save as PDF", nama filenya otomatis mengikuti No. Dokumen.</p>
+          </div>
+
+          <div className="faq-item">
+            <h3>Penawaran yang sudah dibuat, bisa dicari dan diedit lagi tidak?</h3>
+            <p>Bisa. Setelah klik <strong>"Simpan Penawaran"</strong>, penawaran itu masuk ke daftar <strong>"Riwayat Penawaran"</strong> di bawah form (tersimpan per kuartal sesuai Tanggal Dokumennya). Ada kolom pencarian berdasarkan No. Dokumen atau nama Customer. Klik <strong>"Edit"</strong> pada salah satu penawaran untuk memuat ulang semua datanya ke form dan mengubahnya, lalu klik "Update Penawaran Tersimpan" untuk menyimpan perubahannya.</p>
+          </div>
+
+          <div className="faq-item">
+            <h3>Apakah Part Number yang diketik di Buat Penawaran ikut tersimpan untuk rekomendasi berikutnya?</h3>
+            <p>Ya. Setiap kali Penawaran disimpan, semua No. Part & Nama Part yang ada di dalamnya otomatis masuk ke "kamus part" global tracker — sama seperti part yang diketik lewat Data Penjualan. Kamus ini dipakai untuk menyarankan Nama Part & Harga otomatis saat membuat penawaran berikutnya untuk part yang sama.</p>
           </div>
 
           <div className="faq-item">
