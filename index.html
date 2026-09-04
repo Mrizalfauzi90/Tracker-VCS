@@ -80,6 +80,7 @@
   .tab-btn.on:hover{background:var(--ink);}
 
   .logform{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;}
+  @media (max-width:480px){ .logform{grid-template-columns:1fr;} }
   .logform .full{grid-column:1/-1;}
   label{font-family:var(--sans);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);display:block;margin-bottom:5px;}
   select,input[type=date],input[type=time],input[type=text],input[type=tel],input[type=number]{
@@ -176,7 +177,11 @@
   .part-row{display:grid;grid-template-columns:1.1fr 1.2fr 60px 110px auto;gap:8px;margin-bottom:8px;align-items:center;}
   .part-row input{padding:9px 10px;border:2px solid var(--ink);font-family:var(--sans);font-size:12.5px;background:var(--paper-raise);}
   .price-hint{font-family:var(--sans);font-size:10.5px;color:var(--green);font-weight:700;font-style:italic;}
-  @media (max-width:640px){ .part-row{grid-template-columns:1fr 1fr;grid-template-areas:"a b" "c d" "e e";} .part-row input:nth-child(1){grid-area:a;} .part-row input:nth-child(2){grid-area:b;} .part-row input:nth-child(3){grid-area:c;} .part-row input:nth-child(4){grid-area:d;} .part-row span.del{grid-area:e;justify-self:end;} }
+  @media (max-width:640px){
+    .part-row{grid-template-columns:1fr !important;gap:8px;}
+    .part-row input, .part-row select{width:100%;box-sizing:border-box;}
+    .part-row span.del{justify-self:end;margin-top:-2px;padding:4px 10px;}
+  }
 
   .setup-wrap{max-width:520px;margin:60px auto;padding:0 20px;}
   .setup-card{border:2.5px solid var(--ink);background:var(--paper-raise);padding:28px 24px;}
@@ -586,6 +591,38 @@ function formatNominalDisplay(raw){
   if(isNaN(n)) return "";
   return n.toLocaleString("id-ID");
 }
+// Navigasi Enter buat baris part yang jumlahnya dinamis (nambah/kurang), tanpa perlu ref manual
+// per baris: dari kolom terakhir di satu baris -> ke kolom pertama baris berikutnya -> kalau sudah
+// baris terakhir, otomatis klik "+ Tambah Baris" lalu fokus ke baris baru itu.
+function focusNextInPartRow(e){
+  const rowEl = e.target.closest(".part-row");
+  if(!rowEl) return;
+  const inputs = Array.from(rowEl.querySelectorAll("input,select"));
+  const idx = inputs.indexOf(e.target);
+  if(idx>-1 && idx<inputs.length-1){
+    inputs[idx+1].focus();
+    return;
+  }
+  const section = e.target.closest(".parts-section");
+  if(!section) return;
+  const rows = Array.from(section.querySelectorAll(".part-row"));
+  const rowIdx = rows.indexOf(rowEl);
+  if(rowIdx>-1 && rowIdx<rows.length-1){
+    const nextInputs = rows[rowIdx+1].querySelectorAll("input,select");
+    if(nextInputs[0]) nextInputs[0].focus();
+  } else {
+    const addBtn = section.querySelector(".parts-header button");
+    if(addBtn){
+      addBtn.click();
+      setTimeout(()=>{
+        const newRows = section.querySelectorAll(".part-row");
+        const last = newRows[newRows.length-1];
+        const inp = last && last.querySelector("input,select");
+        if(inp) inp.focus();
+      }, 30);
+    }
+  }
+}
 function isWorkday(d, holidays){
   const day = d.getDay();
   if(day===0||day===6) return false;
@@ -879,6 +916,17 @@ function MainApp({onDisconnect, binId}){
   const saveSaleBtnRef = useRef(null);
   const pdfInputRef = useRef(null);
   const quoPdfInputRef = useRef(null);
+  const quoBranchRef = useRef(null);
+  const quoDocNoRef = useRef(null);
+  const quoDocDateRef = useRef(null);
+  const quoCustomerNameRef = useRef(null);
+  const quoAddressRef = useRef(null);
+  const quoPhoneRef = useRef(null);
+  const quoAttnRef = useRef(null);
+  const quoMerkRef = useRef(null);
+  const quoModelRef = useRef(null);
+  const quoSNRef = useRef(null);
+  const quoCustPoNoRef = useRef(null);
   const odoDateRef = useRef(null);
   const odoBeforeRef = useRef(null);
   const odoAfterRef = useRef(null);
@@ -2782,15 +2830,18 @@ function MainApp({onDisconnect, binId}){
           <div className="logform">
             <div>
               <label>Branch</label>
-              <input type="text" value={quoBranch} onChange={e=>setQuoBranch(e.target.value)} />
+              <input type="text" ref={quoBranchRef} value={quoBranch} onChange={e=>setQuoBranch(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoDocNoRef.current && quoDocNoRef.current.focus(); } }} />
             </div>
             <div>
               <label>No. Dokumen</label>
-              <input type="text" value={quoDocNo} onChange={e=>setQuoDocNo(e.target.value)} placeholder={quoFormat==="ais"?"mis. 2602PQ06664":"mis. PQ06664"} />
+              <input type="text" ref={quoDocNoRef} value={quoDocNo} onChange={e=>setQuoDocNo(e.target.value)} placeholder={quoFormat==="ais"?"mis. 2602PQ06664":"mis. PQ06664"}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoDocDateRef.current && quoDocDateRef.current.focus(); } }} />
             </div>
             <div>
               <label>Tanggal Dokumen</label>
-              <input type="date" value={quoDocDate} onChange={e=>setQuoDocDate(e.target.value)} />
+              <input type="date" ref={quoDocDateRef} value={quoDocDate} onChange={e=>setQuoDocDate(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoCustomerNameRef.current && quoCustomerNameRef.current.focus(); } }} />
             </div>
             <div className="full">
               <label>Pilih Customer Terdaftar (opsional, auto-isi alamat/telp/PIC)</label>
@@ -2801,38 +2852,46 @@ function MainApp({onDisconnect, binId}){
             </div>
             <div className="full">
               <label>Nama Customer</label>
-              <input type="text" value={quoCustomerName} onChange={e=>setQuoCustomerName(e.target.value)} placeholder="mis. B00025-PT. Berkah Manis Makmur" />
+              <input type="text" ref={quoCustomerNameRef} value={quoCustomerName} onChange={e=>setQuoCustomerName(e.target.value)} placeholder="mis. B00025-PT. Berkah Manis Makmur"
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoAddressRef.current && quoAddressRef.current.focus(); } }} />
             </div>
             <div className="full">
               <label>Alamat</label>
-              <input type="text" value={quoAddress} onChange={e=>setQuoAddress(e.target.value)} placeholder="Otomatis terisi kalau customer punya alamat tersimpan (dari upload PDF sebelumnya)" />
+              <input type="text" ref={quoAddressRef} value={quoAddress} onChange={e=>setQuoAddress(e.target.value)} placeholder="Otomatis terisi kalau customer punya alamat tersimpan (dari upload PDF sebelumnya)"
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoPhoneRef.current && quoPhoneRef.current.focus(); } }} />
             </div>
             <div>
               <label>No. Telp</label>
-              <input type="text" value={quoPhone} onChange={e=>setQuoPhone(e.target.value)} />
+              <input type="text" ref={quoPhoneRef} value={quoPhone} onChange={e=>setQuoPhone(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoAttnRef.current && quoAttnRef.current.focus(); } }} />
             </div>
             <div>
               <label>Remarks / Attn</label>
-              <input type="text" value={quoAttn} onChange={e=>setQuoAttn(e.target.value)} placeholder="mis. ATTN BPK. PANJI" />
+              <input type="text" ref={quoAttnRef} value={quoAttn} onChange={e=>setQuoAttn(e.target.value)} placeholder="mis. ATTN BPK. PANJI"
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); (quoFormat==="manual" ? quoMerkRef : quoModelRef).current?.focus(); } }} />
             </div>
             {quoFormat==="manual" && (
               <div>
                 <label>Merk</label>
-                <input type="text" value={quoMerk} onChange={e=>setQuoMerk(e.target.value)} />
+                <input type="text" ref={quoMerkRef} value={quoMerk} onChange={e=>setQuoMerk(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoModelRef.current && quoModelRef.current.focus(); } }} />
               </div>
             )}
             <div>
               <label>Model</label>
-              <input type="text" value={quoModel} onChange={e=>setQuoModel(e.target.value)} />
+              <input type="text" ref={quoModelRef} value={quoModel} onChange={e=>setQuoModel(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoSNRef.current && quoSNRef.current.focus(); } }} />
             </div>
             <div>
               <label>Serial Number</label>
-              <input type="text" value={quoSN} onChange={e=>setQuoSN(e.target.value)} />
+              <input type="text" ref={quoSNRef} value={quoSN} onChange={e=>setQuoSN(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); (quoFormat==="ais" ? quoCustPoNoRef : null)?.current?.focus() || document.querySelector(".parts-section .part-row input, .parts-section .part-row select")?.focus(); } }} />
             </div>
             {quoFormat==="ais" && (
               <div>
                 <label>Customer PO No.</label>
-                <input type="text" value={quoCustPoNo} onChange={e=>setQuoCustPoNo(e.target.value)} />
+                <input type="text" ref={quoCustPoNoRef} value={quoCustPoNo} onChange={e=>setQuoCustPoNo(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); document.querySelector(".parts-section .part-row input, .parts-section .part-row select")?.focus(); } }} />
               </div>
             )}
           </div>
@@ -2850,13 +2909,14 @@ function MainApp({onDisconnect, binId}){
                 </div>
                 {quoAisRows.map((r,idx)=>{
                   const kp = findKnownPartFromCombined(r.desc);
+                  const onEnter = e=>{ if(e.key==="Enter"){ e.preventDefault(); focusNextInPartRow(e); } };
                   return (
                   <div key={idx}>
                     <div className="part-row" style={{gridTemplateColumns:"55px 2fr 55px 110px auto"}}>
-                      <input type="text" placeholder="AGC" value={r.agc} onChange={e=>updateQuoAisRow(idx,"agc",e.target.value)} />
-                      <input type="text" list="knownPartsCombinedDatalist" placeholder="No. Part, Nama Part (mis. 94211300, ROLLER MAIN)" value={r.desc} onChange={e=>updateQuoAisRow(idx,"desc",e.target.value)} />
-                      <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>updateQuoAisRow(idx,"qty",e.target.value)} />
-                      <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>updateQuoAisRow(idx,"unitPrice",e.target.value.replace(/\D/g,""))} />
+                      <input type="text" placeholder="AGC" value={r.agc} onChange={e=>updateQuoAisRow(idx,"agc",e.target.value)} onKeyDown={onEnter} />
+                      <input type="text" list="knownPartsCombinedDatalist" placeholder="No. Part, Nama Part (mis. 94211300, ROLLER MAIN)" value={r.desc} onChange={e=>updateQuoAisRow(idx,"desc",e.target.value)} onKeyDown={onEnter} />
+                      <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>updateQuoAisRow(idx,"qty",e.target.value)} onKeyDown={onEnter} />
+                      <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>updateQuoAisRow(idx,"unitPrice",e.target.value.replace(/\D/g,""))} onKeyDown={onEnter} />
                       <span className="del" onClick={()=>removeQuoAisRow(idx)}>&times;</span>
                     </div>
                     {kp && <div className="price-hint" style={{marginTop:-4,marginBottom:6}}>Harga jual sblmnya: {formatRupiah(kp.unitPrice)}</div>}
@@ -2883,13 +2943,14 @@ function MainApp({onDisconnect, binId}){
                   </div>
                   {sec.rows.map((r,idx)=>{
                     const kp = sec.useDatalist ? findKnownPartFromCombined(r.desc) : null;
+                    const onEnter = e=>{ if(e.key==="Enter"){ e.preventDefault(); focusNextInPartRow(e); } };
                     return (
                     <div key={idx}>
                       <div className="part-row" style={{gridTemplateColumns:"1.6fr 55px 110px 1fr auto"}}>
-                        <input type="text" list={sec.useDatalist?"knownPartsCombinedDatalist":undefined} placeholder={sec.useDatalist?"No. Part, Nama Part":"Deskripsi"} value={r.desc} onChange={e=>sec.h.update(idx,"desc",e.target.value)} />
-                        <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>sec.h.update(idx,"qty",e.target.value)} />
-                        <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>sec.h.update(idx,"unitPrice",e.target.value.replace(/\D/g,""))} />
-                        <input type="text" placeholder="Remark" value={r.remark} onChange={e=>sec.h.update(idx,"remark",e.target.value)} />
+                        <input type="text" list={sec.useDatalist?"knownPartsCombinedDatalist":undefined} placeholder={sec.useDatalist?"No. Part, Nama Part":"Deskripsi"} value={r.desc} onChange={e=>sec.h.update(idx,"desc",e.target.value)} onKeyDown={onEnter} />
+                        <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>sec.h.update(idx,"qty",e.target.value)} onKeyDown={onEnter} />
+                        <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>sec.h.update(idx,"unitPrice",e.target.value.replace(/\D/g,""))} onKeyDown={onEnter} />
+                        <input type="text" placeholder="Remark" value={r.remark} onChange={e=>sec.h.update(idx,"remark",e.target.value)} onKeyDown={onEnter} />
                         <span className="del" onClick={()=>sec.h.remove(idx)}>&times;</span>
                       </div>
                       {kp && <div className="price-hint" style={{marginTop:-4,marginBottom:6}}>Harga jual sblmnya: {formatRupiah(kp.unitPrice)}</div>}
@@ -3155,10 +3216,6 @@ function MainApp({onDisconnect, binId}){
           </div>
         </React.Fragment>
       )}
-
-      <div className="footnote">
-        Gunakan panah di sebelah "Tahun" untuk pindah ke tahun berikutnya/sebelumnya, lalu pilih tab kuartal untuk mencatat dan memantau visit/call sesuai periodenya (data tersimpan terpisah per tahun dan kuartal, jadi tracker ini bisa terus dipakai untuk tahun-tahun berikutnya). Target per kuartal bisa diatur manual lewat kolom "Target visit kuartal ini", dan Target Penjualan Tahunan bisa diedit tiap tahun di tab "Laporan Tahunan". Hari kerja dihitung otomatis mengecualikan Sabtu-Minggu dan hari libur nasional; untuk tahun selain 2026, hanya tanggal merah fixed-date (1 Jan, 1 Mei, 17 Agt, 25 Des) yang otomatis terhitung — tanggal merah berbasis lunar/hijriah (Imlek, Idul Fitri, dll) perlu disesuaikan manual tiap tahun kalau diperlukan. Upload PDF PO/Quotation di bagian Data Penjualan akan mencoba menebak nominal, no. dokumen, customer, dan tanggal secara otomatis — hasilnya perlu dicek ulang sebelum disimpan, dan file PDF itu sendiri tidak ikut tersimpan di tracker ini. Daftar customer bersifat global untuk semua tahun dan kuartal. Klik nama/jabatan di pojok kiri atas untuk mengubah profil pengguna. Semua data tersimpan otomatis di perangkat ini.
-      </div>
 
     </div>
   );
