@@ -692,6 +692,7 @@ function MainApp({onDisconnect, binId}){
 
   const [downloadBackupBusy,setDownloadBackupBusy] = useState(false);
   const [downloadBackupErr,setDownloadBackupErr] = useState("");
+  const [lastBackupAt,setLastBackupAt] = useState("");
   const downloadCloudBackup = async()=>{
     setDownloadBackupBusy(true); setDownloadBackupErr("");
     try{
@@ -708,12 +709,23 @@ function MainApp({onDisconnect, binId}){
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      const nowIso = new Date().toISOString();
+      setLastBackupAt(nowIso);
+      window.storage.set("last_backup_at", nowIso).catch(()=>{});
     }catch(e){
       setDownloadBackupErr("Gagal membuat backup. Detail: " + (e && e.message ? e.message : String(e)));
     }finally{
       setDownloadBackupBusy(false);
     }
   };
+  const backupAgeLabel = useMemo(()=>{
+    if(!lastBackupAt) return null;
+    const days = Math.floor((Date.now()-new Date(lastBackupAt).getTime())/86400000);
+    if(days<=0) return {text:"Backup terakhir: hari ini", level:"ok"};
+    if(days===1) return {text:"Backup terakhir: 1 hari lalu", level:"ok"};
+    if(days<14) return {text:"Backup terakhir: "+days+" hari lalu", level: days<7 ? "ok" : "warn"};
+    return {text:"Backup terakhir: "+days+" hari lalu — sebaiknya backup lagi", level:"bad"};
+  },[lastBackupAt]);
 
   const [debugBusy,setDebugBusy] = useState(false);
   const [debugResult,setDebugResult] = useState(null);
@@ -1006,6 +1018,7 @@ function MainApp({onDisconnect, binId}){
         if(cloudData["part_catalog"]){
           try{ setPartCatalog(JSON.parse(cloudData["part_catalog"])); }catch(e3){}
         }
+        if(cloudData["last_backup_at"]){ setLastBackupAt(cloudData["last_backup_at"]); }
       }catch(e){
         setCustomers(SEED_CUSTOMERS.map((name,i)=>({id:"seed-"+i,name,pic:"",phone:"",active:true})));
       }
@@ -1270,7 +1283,11 @@ function MainApp({onDisconnect, binId}){
       setTimeout(()=>{ custQueryRef.current && custQueryRef.current.focus(); }, 0);
     }
   };
-  const removeEntry = (id)=> persistEntriesForQ(qKey, entries.filter(e=>e.id!==id));
+  const removeEntry = (id)=>{
+    const e = entries.find(x=>x.id===id);
+    if(!window.confirm("Hapus catatan "+(e?(e.type==="visit"?"visit":"call")+" "+e.customer:"ini")+"? Tindakan ini tidak bisa dibatalkan.")) return;
+    persistEntriesForQ(qKey, entries.filter(e=>e.id!==id));
+  };
 
   const persistOdoRecords = async(next)=>{
     setOdoRecords(next);
@@ -1295,7 +1312,11 @@ function MainApp({onDisconnect, binId}){
       else{ custQueryRef.current && custQueryRef.current.focus(); }
     }, 0);
   };
-  const removeOdoRecord = (id)=> persistOdoForQ(qKey, odoRecords.filter(r=>r.id!==id));
+  const removeOdoRecord = (id)=>{
+    const r = odoRecords.find(x=>x.id===id);
+    if(!window.confirm("Hapus catatan odometer tanggal "+(r?r.date:"")+"? Tindakan ini tidak bisa dibatalkan.")) return;
+    persistOdoForQ(qKey, odoRecords.filter(r=>r.id!==id));
+  };
   const startEditOdo = (r)=>{
     setEditOdoId(r.id); setEditOdoDate(r.date);
     setEditOdoBefore(r.before!=null?String(r.before):""); setEditOdoAfter(r.after!=null?String(r.after):"");
@@ -1364,7 +1385,11 @@ function MainApp({onDisconnect, binId}){
   const updateSalePartRow = (idx, field, val)=> setSaleParts(prev=> prev.map((p,i)=> i===idx ? {...p,[field]:val} : p));
   const removeSalePartRow = (idx)=> setSaleParts(prev=> prev.filter((_,i)=>i!==idx));
 
-  const removeSaleEntry = (id)=> persistSalesForQ(qKey, salesEntries.filter(s=>s.id!==id));
+  const removeSaleEntry = (id)=>{
+    const s = salesEntries.find(x=>x.id===id);
+    if(!window.confirm("Hapus data penjualan "+(s?(s.docNo||s.customer):"ini")+"? Tindakan ini tidak bisa dibatalkan.")) return;
+    persistSalesForQ(qKey, salesEntries.filter(s=>s.id!==id));
+  };
   const startEditSale = (s)=>{
     setEditSaleId(s.id); setEditSaleDate(s.date); setEditSaleCustomer(s.customer);
     setEditSaleDocNo(s.docNo||""); setEditSaleType(s.docType||"PO"); setEditSaleNominal(String(s.nominal||""));
@@ -1773,6 +1798,16 @@ function MainApp({onDisconnect, binId}){
     if(!quoDocDate){ setErr("Isi Tanggal Dokumen dulu sebelum menyimpan penawaran."); return; }
     setErr("");
     const obj = buildQuotationObj();
+    const targetQ = quarterKeyForDate(quoDocDate);
+    // Kalau ini editan penawaran lama dan tanggalnya diganti ke bulan/kuartal lain, hapus dulu
+    // salinan lamanya di kuartal asal supaya tidak nyangkut dobel.
+    if(quoEditingId){
+      Object.keys(quotationsByKey).forEach(key=>{
+        if(key!==targetQ.key && (quotationsByKey[key]||[]).some(x=>x.id===quoEditingId)){
+          persistQuotationsForQ(key, quotationsByKey[key].filter(x=>x.id!==quoEditingId));
+        }
+      });
+    }
     persistQuotationToItsQuarter(obj, quoDocDate);
     setQuoEditingId(obj.id);
     // Sekalian pelajari part-nya biar bisa direkomendasikan di penawaran berikutnya
@@ -1810,6 +1845,37 @@ function MainApp({onDisconnect, binId}){
     if(!window.confirm("Hapus penawaran "+q.docNo+" dari riwayat? Tindakan ini tidak bisa dibatalkan.")) return;
     persistQuotationsForQ(qKey, (quotationsByKey[qKey]||[]).filter(x=>x.id!==q.id));
     if(quoEditingId===q.id) newQuotation();
+  };
+  const dealQuotationToSale = (q)=>{
+    if(q.dealtSaleId){
+      if(!window.confirm("Penawaran ini kelihatannya sudah pernah dijadikan Penjualan sebelumnya. Tetap buat transaksi baru lagi?")) return;
+    } else if(!window.confirm("Jadikan penawaran "+q.docNo+" sebagai transaksi Penjualan? Data akan ditambahkan ke Data Penjualan pada tanggal "+q.docDate+".")){
+      return;
+    }
+    const splitPartText = (text)=>{
+      const [pn, ...rest] = (text||"").split(",");
+      return {partNo:(pn||"").trim(), desc:rest.join(",").trim()};
+    };
+    let totalAll, partsForSale;
+    if(q.format==="ais"){
+      const calc = calcSection(q.aisRows||[], true, q.discPct);
+      totalAll = Math.round(calc.total);
+      partsForSale = calc.rows.map(r=>({...splitPartText(r.desc), qty:r.qtyNum, unitPrice:r.priceNum})).filter(p=>p.partNo && p.qty>0);
+    } else {
+      const sp = calcSection(q.spareParts||[], true, q.manualDiscPct);
+      const cs = calcSection(q.consumable||[], false, 0);
+      const sv = calcSection(q.service||[], false, 0);
+      totalAll = Math.round(sp.total + cs.total + sv.total);
+      partsForSale = sp.rows.map(r=>({...splitPartText(r.desc), qty:r.qtyNum, unitPrice:r.priceNum})).filter(p=>p.partNo && p.qty>0);
+    }
+    const saleObj = {
+      id: Date.now(), date: q.docDate, customer: q.customerName, docNo: q.docNo,
+      docType: "Quotation", nominal: totalAll, note: "Dari Buat Penawaran (deal)", parts: partsForSale
+    };
+    persistSaleToItsQuarter(saleObj, q.docDate);
+    if(partsForSale.length) mergePartsIntoCatalog(partsForSale, q.docDate);
+    persistQuotationToItsQuarter({...q, dealtSaleId: saleObj.id}, q.docDate);
+    setInfo("Penawaran "+q.docNo+" berhasil dijadikan transaksi Penjualan senilai "+formatRupiah(totalAll)+".");
   };
   const quotationsThisQ = quotationsByKey[qKey] || [];
   const quoSearchClean = quoSearch.trim().toLowerCase();
@@ -2105,7 +2171,7 @@ function MainApp({onDisconnect, binId}){
         <div className="date">{today.toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
       </div>
 
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:4}}>
         <div className="cloud-badge" onClick={()=>{ if(window.confirm("Putuskan koneksi cloud di perangkat ini? Data di cloud tetap aman, cuma perlu disambungkan ulang lain kali.")) onDisconnect(); }} title="Klik untuk memutus/mengganti koneksi cloud di perangkat ini">
           <span className="cloud-dot"></span> Tersambung ke Cloud (Bin: {binId}) &middot; ubah koneksi
         </div>
@@ -2144,6 +2210,14 @@ function MainApp({onDisconnect, binId}){
               </tbody>
             </table>
           )}
+        </div>
+      )}
+      {backupAgeLabel && (
+        <div style={{
+          fontFamily:"var(--sans)", fontSize:11, fontWeight:700, marginBottom:10,
+          color: backupAgeLabel.level==="ok" ? "var(--green)" : backupAgeLabel.level==="warn" ? "#B8860B" : "var(--red)"
+        }}>
+          {backupAgeLabel.text}
         </div>
       )}
       {downloadBackupErr && <div style={{color:"var(--red)",fontSize:11.5,fontWeight:600,marginBottom:14}}>{downloadBackupErr}</div>}
@@ -3026,9 +3100,11 @@ function MainApp({onDisconnect, binId}){
                       {q.docNo || "(tanpa No. Dokumen)"}
                       <span className="meta"> — {q.customerName||"-"}</span>
                       <span className="meta"> — {formatRupiah(q.totalAll)}</span>
+                      {q.dealtSaleId && <span className="meta" style={{color:"var(--green)",fontWeight:700}}> — sudah Deal</span>}
                     </span>
                     <span className="date">{q.docDate ? new Date(q.docDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'short'}) : ""}</span>
                     <span className="icon-btn" style={{fontSize:11,padding:"3px 8px"}} onClick={()=>loadQuotationForEdit(q)}>Edit</span>
+                    <span className="icon-btn" style={{fontSize:11,padding:"3px 8px",background:q.dealtSaleId?"var(--paper-raise)":"var(--green)",color:q.dealtSaleId?"var(--ink)":"#fff",borderColor:"var(--green)"}} onClick={()=>dealQuotationToSale(q)}>Deal</span>
                     <span className="del" onClick={()=>deleteQuotation(q)}>&times;</span>
                   </div>
                 ))}
@@ -3208,6 +3284,16 @@ function MainApp({onDisconnect, binId}){
           <div className="faq-item">
             <h3>Amankah kalau HP hilang atau tracker error?</h3>
             <p>Data utama aman di Cloud, tidak tersimpan di HP. Kalau HP hilang, tinggal buka tracker dari perangkat lain dan sambungkan dengan API Key + Bin ID yang sama. File backup .json adalah lapisan pengaman tambahan di luar itu.</p>
+          </div>
+
+          <div className="faq-item">
+            <h3>Amankah kalau input dari HP dan PC di waktu yang bersamaan?</h3>
+            <p>Sebaiknya dihindari. Sistem penyimpanan gratis yang dipakai tracker ini membaca-lalu-menulis seluruh data sekaligus, bukan per-catatan — jadi kalau dua perangkat sama-sama menyimpan dalam waktu yang nyaris bersamaan, yang tersimpan belakangan bisa menimpa perubahan dari perangkat yang lain. Untuk penggunaan normal (input satu-satu, gantian device) ini tidak masalah. Kalau memang perlu input dari dua perangkat sekaligus dalam waktu yang sama, sebaiknya salah satunya menunggu beberapa detik dulu setelah yang lain menyimpan, dan sesekali klik "Backup Data Cloud (JSON)" sebagai jaring pengaman.</p>
+          </div>
+
+          <div className="faq-item">
+            <h3>Kalau penawaran sudah deal, apa perlu input ulang manual di Data Penjualan?</h3>
+            <p>Tidak perlu. Di "Riwayat Penawaran", klik tombol hijau <strong>"Deal"</strong> pada penawaran yang bersangkutan — sistem otomatis membuat entri baru di Data Penjualan dengan nominal, customer, dan rincian part yang sama persis, tanpa perlu mengetik ulang. Penawaran yang sudah di-deal akan ditandai "sudah Deal" di riwayatnya.</p>
           </div>
 
           <div className="faq-item">
