@@ -1713,6 +1713,22 @@ function MainApp({onDisconnect, binId}){
     }
   };
 
+  const switchQuoFormat = (newFormat)=>{
+    if(newFormat===quoFormat) return;
+    if(newFormat==="manual" && quoFormat==="ais"){
+      // Format AIS -> Manual: pindahkan isi Rincian Part AIS ke section SPARE PARTS
+      const converted = quoAisRows.filter(r=>r.desc && r.desc.trim()).map(r=>({desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, remark:""}));
+      if(converted.length) setQuoSpareParts(converted);
+    } else if(newFormat==="ais" && quoFormat==="manual"){
+      // Format Manual -> AIS: gabungkan Spare Parts + Consumable + Service jadi satu tabel AIS
+      const allRows = [...quoSpareParts, ...quoConsumable, ...quoService]
+        .filter(r=>r.desc && r.desc.trim())
+        .map(r=>({agc:"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice}));
+      if(allRows.length) setQuoAisRows(allRows);
+    }
+    setQuoFormat(newFormat);
+  };
+
   const addQuoAisRow = ()=> setQuoAisRows(prev=>[...prev, {agc:"24", desc:"", qty:"", unitPrice:""}]);
   const removeQuoAisRow = (idx)=> setQuoAisRows(prev=> prev.length>1 ? prev.filter((_,i)=>i!==idx) : prev);
   const updateQuoAisRow = (idx, field, val)=> setQuoAisRows(prev=> prev.map((r,i)=>{
@@ -2908,8 +2924,8 @@ function MainApp({onDisconnect, binId}){
           )}
 
           <div className="type-toggle no-print" style={{maxWidth:420,marginBottom:18}}>
-            <div className={"type-btn"+(quoFormat==="ais"?" active-visit":"")} onClick={()=>setQuoFormat("ais")}>Format AIS System</div>
-            <div className={"type-btn"+(quoFormat==="manual"?" active-call":"")} onClick={()=>setQuoFormat("manual")}>Format Manual BMP</div>
+            <div className={"type-btn"+(quoFormat==="ais"?" active-visit":"")} onClick={()=>switchQuoFormat("ais")}>Format AIS System</div>
+            <div className={"type-btn"+(quoFormat==="manual"?" active-call":"")} onClick={()=>switchQuoFormat("manual")}>Format Manual BMP</div>
           </div>
 
           <div className="logform">
