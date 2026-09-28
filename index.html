@@ -218,10 +218,10 @@
     .quo-preview-scroll::after{content:"\2194 geser untuk lihat semua kolom";display:block;text-align:center;font-family:var(--sans);font-size:10.5px;color:var(--muted);margin-top:6px;}
   }
   .quo-logo-circle{width:64px;height:64px;border-radius:50%;background:#C4272B;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;flex-shrink:0;}
-  .quo-logo-img{width:64px;height:auto;flex-shrink:0;}
+  .quo-logo-img{width:96px;height:auto;flex-shrink:0;display:block;}
   .quo-manual-header-img{width:100%;max-width:600px;height:auto;display:block;margin-bottom:10px;}
-  .quo-ais-header-block{display:flex;flex-direction:row;align-items:center;gap:14px;margin-bottom:10px;}
-  .quo-ais-company{font-size:19px;font-weight:800;color:#000;letter-spacing:0.3px;}
+  .quo-ais-header-block{display:flex;flex-direction:column;align-items:center;width:96px;margin-bottom:10px;}
+  .quo-ais-company{width:96px;margin-top:1px;font-size:10px;font-weight:800;line-height:1.15;text-align:center;color:#000;letter-spacing:0;white-space:nowrap;}
   .quo-ais-topline{font-size:10px;margin-top:4px;}
   .quo-title{font-size:20px;font-weight:700;letter-spacing:1px;}
   .quo-ais-info{display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;margin-bottom:10px;}
@@ -3279,7 +3279,7 @@ function MainApp({onDisconnect, binId}){
               <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />
               <div className="quo-ais-header-block">
                 <img src={BERCA_LOGO_B64} alt="BERCA" className="quo-logo-img" />
-                <div className="quo-ais-company">PT. BERCA MANDIRI PERKASA</div>
+                <div className="quo-ais-company">PT. BERCA<br/>MANDIRI PERKASA</div>
               </div>
               <div className="quo-title" style={{textAlign:"center",marginBottom:14}}>QUOTATION</div>
               <div className="quo-ais-info">
@@ -3331,13 +3331,14 @@ function MainApp({onDisconnect, binId}){
                   PLEASE SPECIFY EXACTLY THE COMPANY NAME, ADDRESS, NPWP NO. IN YOUR PURCHASE ORDER<br/>
                   ACCORDING TO THE ONES DESIGNATED IN NPWP
                 </div>
-                <div className="quo-ais-sign-row">
-                  <div>ORIGINATOR<div className="quo-sign-space">{signerImg && <img src={signerImg} alt="" className="quo-sign-img" />}</div><div className="quo-sign-line"></div></div>
-                  <div>REQUESTER<div className="quo-sign-space"></div><div className="quo-sign-line"></div></div>
+                <div className="quo-manual-sign-row">
+                  <div>PT. BERCA MANDIRI PERKASA</div>
+                  <div>CUSTOMER</div>
                 </div>
-                <div className="quo-ais-sign-name-row">
-                  <div>( &nbsp;{signerName}&nbsp; )</div>
-                  <div>( &nbsp;{signerName}&nbsp; )</div>
+                <div className="quo-manual-sign-space">{signerImg && <img src={signerImg} alt="" className="quo-sign-img" />}</div>
+                <div className="quo-manual-sign-name-row">
+                  <div>{signerName}</div>
+                  <div></div>
                 </div>
               </div>
             </div>
