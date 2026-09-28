@@ -151,8 +151,8 @@
   .bar-fill.oldc{background:var(--green);}
   .bar-fill.sales{background:var(--blue);}
 
-  .maintabs{display:flex;gap:0;margin-bottom:20px;border:2.5px solid var(--ink);}
-  .maintab-btn{flex:1;padding:12px 8px;text-align:center;cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:0.5px;background:var(--paper-raise);text-transform:uppercase;transition:background .15s ease,color .15s ease;}
+  .maintabs{display:flex;flex-wrap:wrap;gap:0;margin-bottom:20px;border:2.5px solid var(--ink);}
+  .maintab-btn{flex:1 1 auto;padding:12px 8px;text-align:center;cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:0.5px;background:var(--paper-raise);text-transform:uppercase;transition:background .15s ease,color .15s ease;}
   .maintab-btn:hover{background:#EAE2CC;}
   .maintab-btn.on{background:var(--ink);color:#fff;}
 
@@ -213,6 +213,24 @@
   .quo-sign-space{height:44px;display:flex;align-items:flex-end;justify-content:center;}
   .quo-manual-sign-space{height:58px;display:flex;align-items:flex-end;justify-content:flex-start;}
   .signer-card{border:2.5px solid var(--ink);background:var(--paper-raise);padding:16px;margin-bottom:20px;}
+  /* Bubble: kalau menu punya background gambar, tiap blok isi dialasi kotak semi-solid supaya tulisan tetap jelas */
+  .wrap.has-bg > *:not(.help-overlay):not(.maintabs){background:rgba(250,246,236,var(--bubble,.92));border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.22);margin-bottom:14px !important;}
+  .wrap.has-bg > *:not(.help-overlay):not(.maintabs):not(.signer-card){padding:12px 16px;}
+  .wrap.has-bg > .signer-card{background:rgba(255,255,255,var(--bubble,.92));}
+  .wrap.has-bg > .maintabs{box-shadow:0 2px 12px rgba(0,0,0,.22);}
+  .bg-quick{display:flex;justify-content:flex-end;gap:6px;margin:-10px 0 14px;}
+  .bg-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1.5px solid var(--line);}
+  .bg-thumb{width:64px;height:40px;flex-shrink:0;border:2px solid var(--ink);background:#EAE2CC center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);font-family:var(--sans);}
+  .help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:8px;border-radius:50%;border:2px solid var(--blue);color:var(--blue);background:#fff;font-family:var(--sans);font-weight:800;font-size:12px;line-height:1;cursor:pointer;vertical-align:middle;user-select:none;}
+  .help-q:hover{background:var(--blue);color:#fff;}
+  .help-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;}
+  .help-box{background:#fff;border:2.5px solid var(--ink);max-width:520px;width:100%;max-height:82vh;overflow:auto;box-shadow:6px 6px 0 var(--ink);font-family:var(--sans);}
+  .help-title{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;background:var(--ink);color:#fff;font-weight:700;font-size:14px;position:sticky;top:0;}
+  .help-close{cursor:pointer;font-size:24px;line-height:1;padding:0 4px;}
+  .help-body{padding:14px 18px 18px;font-size:13px;line-height:1.6;}
+  .help-body p{margin:0 0 10px;}
+  .help-body ol,.help-body ul{margin:0 0 10px;padding-left:20px;}
+  .help-body li{margin-bottom:6px;}
   .quo-preview-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px 4px;}
   @media screen and (max-width:840px){
     .quo-preview-scroll::after{content:"\2194 geser untuk lihat semua kolom";display:block;text-align:center;font-family:var(--sans);font-size:10.5px;color:var(--muted);margin-top:6px;}
@@ -281,6 +299,7 @@
     .quo-manual-signblock, .quo-ais-signblock{page-break-inside:avoid;}
     .quo-sign-space, .quo-manual-sign-space{page-break-inside:avoid;}
     .quo-watermark{position:fixed;top:50%;left:50%;}
+    body{background:none !important;}
   }
 
   .footnote{font-family:var(--sans);font-weight:500;font-size:11px;color:var(--muted);margin-top:34px;line-height:1.7;border-top:3px solid var(--ink);padding-top:16px;}
@@ -895,6 +914,7 @@ function MainApp({onDisconnect, binId}){
   const [quoCustPoNo,setQuoCustPoNo] = useState("BY VISIT");
   const [quoDiscPct,setQuoDiscPct] = useState("0");
   const [quoPpnPct,setQuoPpnPct] = useState("11");
+  const [quoPpnExclude,setQuoPpnExclude] = useState(false); // true = customer minta PPN tidak ditampilkan, ditulis "Exclude PPN"
   // AIS format: satu tabel line item
   const [quoAisRows,setQuoAisRows] = useState([{agc:"24", partNo:"", desc:"", qty:"", unitPrice:""}]);
   // Manual format: 3 section
@@ -1856,11 +1876,11 @@ function MainApp({onDisconnect, binId}){
     const discPct = Number(quoDiscPct)||0;
     const discAmt = totalValue*discPct/100;
     const afterDisc = totalValue-discAmt;
-    const ppnPct = Number(quoPpnPct)||0;
+    const ppnPct = quoPpnExclude ? 0 : (Number(quoPpnPct)||0);
     const ppn = afterDisc*(ppnPct/100);
     const total = afterDisc+ppn;
     return {rows, totalValue, discPct, discAmt, ppnPct, ppn, total};
-  },[quoAisRows, quoDiscPct, quoPpnPct]);
+  },[quoAisRows, quoDiscPct, quoPpnPct, quoPpnExclude]);
 
   const calcSection = (rows, applyDisc, discPct, ppnPct)=>{
     const r2 = rows.map(r=>({...r, qtyNum:Number(r.qty)||0, priceNum:Number(r.unitPrice)||0, ext:(Number(r.qty)||0)*(Number(r.unitPrice)||0)}));
@@ -1872,10 +1892,170 @@ function MainApp({onDisconnect, binId}){
     return {rows:r2, totalValue, discAmt, ppn, total};
   };
   const quoManualCalc = useMemo(()=>({
-    spareParts: calcSection(quoSpareParts, true, quoManualDiscPct, quoPpnPct),
-    consumable: calcSection(quoConsumable, false, 0, quoPpnPct),
-    service: calcSection(quoService, false, 0, quoPpnPct)
-  }),[quoSpareParts, quoConsumable, quoService, quoManualDiscPct, quoPpnPct]);
+    spareParts: calcSection(quoSpareParts, true, quoManualDiscPct, quoPpnExclude?0:quoPpnPct),
+    consumable: calcSection(quoConsumable, false, 0, quoPpnExclude?0:quoPpnPct),
+    service: calcSection(quoService, false, 0, quoPpnExclude?0:quoPpnPct)
+  }),[quoSpareParts, quoConsumable, quoService, quoManualDiscPct, quoPpnPct, quoPpnExclude]);
+
+  // ===== Pengaturan penawaran (disimpan di Cloud, ikut ke semua perangkat) =====
+  const QS_DEFAULT = {ppn:"11", branch:"02-CILEGON", custPo:"BY VISIT", validity:"Penawaran Berlaku 2 minggu.", watermark:true};
+  const [quoSettings,setQuoSettings] = useState(QS_DEFAULT);
+  const [qsDraft,setQsDraft] = useState(QS_DEFAULT);
+  const ppnDefault = quoSettings.ppn;
+  useEffect(()=>{
+    (async()=>{
+      try{
+        let saved = null;
+        try{ const r = await window.storage.get("quo_settings_v1"); if(r && r.value) saved = JSON.parse(r.value); }catch(e){}
+        if(!saved){
+          try{ const r2 = await window.storage.get("quo_ppn_default"); if(r2 && r2.value){ const p = String(JSON.parse(r2.value)); if(!isNaN(Number(p))) saved = {ppn:p}; } }catch(e){}
+        }
+        if(saved){
+          const merged = {...QS_DEFAULT, ...saved};
+          setQuoSettings(merged); setQsDraft(merged);
+          if(!quoEditingId){
+            setQuoPpnPct(prev=> prev==="11" ? merged.ppn : prev);
+            setQuoBranch(prev=> prev==="02-CILEGON" ? merged.branch : prev);
+            setQuoCustPoNo(prev=> prev==="BY VISIT" ? merged.custPo : prev);
+          }
+        }
+      }catch(e){}
+    })();
+  },[]);
+  const qsDirty = String(qsDraft.ppn).replace(",",".").trim()!==quoSettings.ppn
+    || (qsDraft.branch||"").trim()!==quoSettings.branch
+    || (qsDraft.custPo||"").trim()!==quoSettings.custPo
+    || (qsDraft.validity||"").trim()!==quoSettings.validity
+    || !!qsDraft.watermark!==!!quoSettings.watermark;
+  const saveQuoSettings = async()=>{
+    const raw = String(qsDraft.ppn).replace(",",".").trim();
+    const n = Number(raw);
+    if(raw==="" || isNaN(n) || n<0 || n>100){ setErr("Tarif PPN harus angka antara 0 sampai 100."); return; }
+    const next = {ppn:String(n), branch:(qsDraft.branch||"").trim()||QS_DEFAULT.branch, custPo:(qsDraft.custPo||"").trim(), validity:(qsDraft.validity||"").trim(), watermark:!!qsDraft.watermark};
+    const old = quoSettings;
+    setQuoSettings(next); setQsDraft(next);
+    // Form yang sedang dibuka (bukan penawaran lama) ikut pindah ke nilai baru kalau masih memakai nilai standar lama
+    if(!quoEditingId){
+      if(!quoPpnExclude && (Number(quoPpnPct)||0)>0 && quoPpnPct===old.ppn) setQuoPpnPct(next.ppn);
+      if(quoBranch===old.branch) setQuoBranch(next.branch);
+      if(quoCustPoNo===old.custPo) setQuoCustPoNo(next.custPo);
+    }
+    try{ await window.storage.set("quo_settings_v1", JSON.stringify(next)); setInfo("Pengaturan penawaran disimpan. Berlaku untuk penawaran baru; penawaran lama tetap pakai nilai saat dibuat."); }
+    catch(e){ setErr("Gagal menyimpan pengaturan penawaran. Detail: " + (e && e.message ? e.message : String(e))); }
+  };
+
+  // ===== Tampilan: background per menu (disimpan di browser perangkat ini) =====
+  const THEME_KEY = "tracker_theme_v1";
+  const BG_VIEWS = [
+    {k:"input", label:"Input & Kuartal"},
+    {k:"report", label:"Laporan Tahunan"},
+    {k:"quotation", label:"Buat Penawaran"},
+    {k:"faq", label:"Panduan"},
+    {k:"settings", label:"Pengaturan"}
+  ];
+  const [theme,setTheme] = useState(()=>{
+    try{ const t = JSON.parse(localStorage.getItem(THEME_KEY)||"null"); if(t && t.bgs) return {bgs:t.bgs, bubble: typeof t.bubble==="number" ? t.bubble : 0.92}; }catch(e){}
+    return {bgs:{}, bubble:0.92};
+  });
+  const persistTheme = (next)=>{
+    try{ localStorage.setItem(THEME_KEY, JSON.stringify(next)); }
+    catch(e){ setErr("Gagal menyimpan background (penyimpanan browser penuh). Coba gambar yang lebih kecil atau hapus background menu lain."); return false; }
+    setTheme(next); return true;
+  };
+  const handleBgFile = (viewKey, file)=>{
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onerror = ()=> setErr("Gagal membaca file gambar.");
+    reader.onload = ()=>{
+      const im = new Image();
+      im.onerror = ()=> setErr("File bukan gambar yang valid. Pakai JPG, PNG, atau WEBP.");
+      im.onload = ()=>{
+        const maxDim = 1200;
+        const ratio = Math.min(maxDim/Math.max(im.width,im.height), 1);
+        const w = Math.max(1, Math.round(im.width*ratio)), h = Math.max(1, Math.round(im.height*ratio));
+        const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h);
+        ctx.drawImage(im, 0, 0, w, h);
+        const url = cv.toDataURL("image/jpeg", 0.68);
+        if(persistTheme({...theme, bgs:{...theme.bgs, [viewKey]:url}})) setInfo("Background menu \""+(BG_VIEWS.find(v=>v.k===viewKey)||{}).label+"\" diganti.");
+      };
+      im.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+  const removeBg = (viewKey)=>{
+    const nb = {...theme.bgs}; delete nb[viewKey];
+    persistTheme({...theme, bgs:nb});
+  };
+  const bgNow = theme.bgs[mainView] || null;
+  useEffect(()=>{
+    const b = document.body;
+    if(bgNow){
+      b.style.backgroundImage = 'url("'+bgNow+'")';
+      b.style.backgroundSize = "cover"; b.style.backgroundPosition = "center";
+      b.style.backgroundAttachment = "fixed"; b.style.backgroundRepeat = "no-repeat";
+    } else {
+      b.style.backgroundImage = ""; b.style.backgroundSize = ""; b.style.backgroundPosition = ""; b.style.backgroundAttachment = ""; b.style.backgroundRepeat = "";
+    }
+  },[bgNow]);
+
+  // ===== Petunjuk (tanda tanya) =====
+  const [helpKey,setHelpKey] = useState(null);
+  const helpBtn = (k)=>(
+    <span className="help-q no-print" role="button" tabIndex={0} title="Petunjuk pengisian"
+      onClick={()=>setHelpKey(k)} onKeyDown={e=>{ if(e.key==="Enter"||e.key===" ") setHelpKey(k); }}>?</span>
+  );
+  const HELP = {
+    umum:{ title:"Tata cara pengisian Pengaturan Tracker VCS", body:(
+      <React.Fragment>
+        <p><b>Ada dua tempat mengubah pengaturan:</b> di menu <b>Pengaturan</b> (semua ada di satu tempat), atau langsung di menu terkait, misalnya <b>Buat Penawaran</b> (buka bagian "Pengaturan penawaran" dan kartu "Penanda Tangan"). Dua-duanya mengubah data yang sama.</p>
+        <ol>
+          <li><b>Pengaturan Penawaran</b>: isi tarif PPN, cabang, PO default, catatan masa berlaku, dan pilih watermark aktif atau tidak. Klik <b>Simpan</b> supaya tersimpan (ikut ke HP dan PC lewat Cloud).</li>
+          <li><b>Penanda Tangan</b>: isi nama, upload gambar tanda tangan (JPG/PNG), lalu Simpan. Nama dan TTD lama tetap ada sebagai pilihan.</li>
+          <li><b>Tampilan & Background</b>: pilih gambar untuk tiap menu. Tulisan tetap terbaca karena selalu ada kotak (bubble) di belakangnya. Atur kepekatannya dengan slider.</li>
+        </ol>
+        <p><b>Perlu diingat:</b> pengaturan penawaran tersimpan di Cloud. Tanda tangan dan background tersimpan di browser perangkat ini saja (gambar terlalu besar untuk Cloud), jadi upload sekali per perangkat.</p>
+      </React.Fragment>) },
+    penawaran:{ title:"Pengaturan Penawaran", body:(
+      <React.Fragment>
+        <ul>
+          <li><b>Tarif PPN standar (%)</b>: dipakai otomatis untuk penawaran baru. Kalau PPN naik (mis. jadi 12), ganti di sini lalu Simpan. Penawaran lama tidak berubah.</li>
+          <li><b>Cabang (default)</b>: tulisan di baris BRANCH dokumen, mis. 02-CILEGON.</li>
+          <li><b>Customer PO No default</b>: isi awal kolom Customer PO di format AIS, mis. BY VISIT. Boleh dikosongkan.</li>
+          <li><b>Catatan masa berlaku</b>: kalimat miring di bawah tabel format Manual. Kosongkan kalau tidak mau ditampilkan.</li>
+          <li><b>Watermark</b>: centang untuk menampilkan logo Berca tipis di dokumen. Hilangkan centang kalau tidak mau.</li>
+        </ul>
+        <p>Untuk PPN per customer (Kawasan Berikat atau Exclude PPN), tetap pakai tombol Mode di form penawarannya.</p>
+      </React.Fragment>) },
+    ttd:{ title:"Penanda Tangan", body:(
+      <React.Fragment>
+        <ol>
+          <li>Ketik <b>Nama Penanda Tangan</b>.</li>
+          <li>Klik <b>Upload Gambar TTD</b>, pilih foto tanda tangan (JPG/PNG). Latar putih dibuat transparan otomatis. Foto di kertas putih dengan pena hitam atau biru hasilnya paling bagus.</li>
+          <li>Klik <b>Simpan Penanda Tangan</b>. Untuk menambah orang lain tanpa menimpa yang lama, pilih <b>Simpan sebagai Baru</b>.</li>
+          <li>Ganti penanda tangan lewat menu pilihan di atas.</li>
+        </ol>
+      </React.Fragment>) },
+    bg:{ title:"Tampilan & Background", body:(
+      <React.Fragment>
+        <ol>
+          <li>Klik <b>Pilih Gambar</b> di baris menu yang diinginkan (Input & Kuartal, Laporan Tahunan, Buat Penawaran, Panduan, Pengaturan). Tiap menu boleh beda gambar.</li>
+          <li>Gambar otomatis dikecilkan supaya ringan. Foto terang, gelap, ramai, semuanya aman karena tulisan ada di dalam kotak bubble.</li>
+          <li>Kalau kotak terasa terlalu tebal atau tipis, geser slider <b>Kepekatan bubble</b>. Makin tinggi makin jelas tulisannya.</li>
+          <li><b>Hapus</b> mengembalikan menu itu ke warna polos.</li>
+        </ol>
+        <p>Background tidak ikut tercetak atau ter-export ke PDF penawaran.</p>
+      </React.Fragment>) }
+  };
+
+  // Mode PPN: tarif standar -> Kawasan Berikat (0%, baris PPN disembunyikan) -> Exclude PPN (ditulis "Exclude PPN") -> kembali ke tarif standar
+  const cyclePpnMode = ()=>{
+    if(quoPpnExclude){ setQuoPpnExclude(false); setQuoPpnPct(ppnDefault); }
+    else if((Number(quoPpnPct)||0)===0){ setQuoPpnExclude(true); }
+    else { setQuoPpnPct("0"); }
+  };
+  const ppnModeLabel = quoPpnExclude ? "Exclude PPN (klik: pakai PPN "+ppnDefault+"%)" : ((Number(quoPpnPct)||0)===0 ? "Kawasan Berikat 0% (klik: Exclude PPN)" : "PPN "+quoPpnPct+"% (klik: Kawasan Berikat)");
 
   const exportQuotationToPdf = ()=>{
     const originalTitle = document.title;
@@ -1892,7 +2072,7 @@ function MainApp({onDisconnect, binId}){
     format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
     customerName: quoCustomerName.trim(), address: quoAddress.trim(), phone: quoPhone.trim(),
     attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
-    custPoNo: quoCustPoNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct,
+    custPoNo: quoCustPoNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
     aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
     signerId: signers.activeId || null,
     totalAll: quoFormat==="ais" ? Math.round(quoAisCalc.total) : Math.round(quoManualCalc.spareParts.total+quoManualCalc.consumable.total+quoManualCalc.service.total),
@@ -1927,7 +2107,7 @@ function MainApp({onDisconnect, binId}){
     setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||new Date().toISOString().slice(0,10));
     setQuoCustomerName(q.customerName||""); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
     setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"");
-    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11");
+    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
     setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
     setQuoConsumable(q.consumable && q.consumable.length ? q.consumable : [{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -1940,7 +2120,7 @@ function MainApp({onDisconnect, binId}){
     setQuoEditingId(null);
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
     setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT");
-    setQuoDiscPct("0"); setQuoManualDiscPct("0"); setQuoPpnPct("11");
+    setQuoDiscPct("0"); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
     setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts([{desc:"", qty:"", unitPrice:"", remark:""}]);
     setQuoConsumable([{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -1963,7 +2143,7 @@ function MainApp({onDisconnect, binId}){
       return {partNo:(pn||"").trim(), desc:rest.join(",").trim()};
     };
     let totalAll, partsForSale;
-    const qPpnPct = q.ppnPct!=null ? q.ppnPct : "11";
+    const qPpnPct = q.ppnExclude ? "0" : (q.ppnPct!=null ? q.ppnPct : "11");
     if(q.format==="ais"){
       const calc = calcSection(q.aisRows||[], true, q.discPct, qPpnPct);
       totalAll = Math.round(calc.total);
@@ -2006,7 +2186,7 @@ function MainApp({onDisconnect, binId}){
         if(r.qtyNum>0 && !r.priceNum) issues.push(`Baris ${i+1} (${r.desc||"tanpa Part"}): Qty diisi tapi Unit Price masih kosong/0.`);
         if(r.qtyNum>0 && !r.desc.trim()) issues.push(`Baris ${i+1}: Deskripsi masih kosong.`);
       });
-      const recompTotal = quoAisCalc.rows.reduce((s,r)=>s+r.ext,0)*(1-((Number(quoDiscPct)||0)/100))*(1+((Number(quoPpnPct)||0)/100));
+      const recompTotal = quoAisCalc.rows.reduce((s,r)=>s+r.ext,0)*(1-((Number(quoDiscPct)||0)/100))*(1+((quoPpnExclude?0:(Number(quoPpnPct)||0))/100));
       if(Math.abs(recompTotal-quoAisCalc.total)>2){
         issues.push("Ditemukan selisih hasil hitung ulang Total (kemungkinan pembulatan) — mohon dicek manual sekali lagi.");
       }
@@ -2052,12 +2232,13 @@ function MainApp({onDisconnect, binId}){
       : "sesuai kebutuhan yang telah didiskusikan";
     const subjectUnit = unitLabel || "Spare Part & Consumable";
 
+    const ppnTag = quoPpnExclude ? " (Exclude PPN)" : ((Number(quoPpnPct)||0)>0 ? " (Incl. PPN)" : "");
     let breakdownWa = "";
     if(quoFormat==="manual"){
       breakdownWa = "Ringkasan Penawaran:\n"
-        + "- Spare Parts (Incl. PPN): "+formatRupiah(Math.round(quoManualCalc.spareParts.total))+"\n"
-        + "- Consumable (Incl. PPN): "+formatRupiah(Math.round(quoManualCalc.consumable.total))+"\n"
-        + "- Service (Incl. PPN): "+formatRupiah(Math.round(quoManualCalc.service.total))+"\n\n";
+        + "- Spare Parts"+ppnTag+": "+formatRupiah(Math.round(quoManualCalc.spareParts.total))+"\n"
+        + "- Consumable"+ppnTag+": "+formatRupiah(Math.round(quoManualCalc.consumable.total))+"\n"
+        + "- Service"+ppnTag+": "+formatRupiah(Math.round(quoManualCalc.service.total))+"\n\n";
     }
 
     const wa = "Selamat "+greetingByHour()+",\n"
@@ -2084,7 +2265,7 @@ function MainApp({onDisconnect, binId}){
       + "PT. Berca Mandiri Perkasa - Branch Cilegon";
 
     return { wa, emailSubject, emailBody };
-  },[quoFormat, quoAisCalc, quoManualCalc, quoAttn, quoCustomerName, quoMerk, quoModel, quoSN, quoDocNo, quoDocDate, signerName]);
+  },[quoFormat, quoAisCalc, quoManualCalc, quoAttn, quoCustomerName, quoMerk, quoModel, quoSN, quoDocNo, quoDocDate, signerName, quoPpnPct, quoPpnExclude]);
 
   const [copyFeedback,setCopyFeedback] = useState("");
   const copyToClipboard = (text, label)=>{
@@ -2121,10 +2302,14 @@ function MainApp({onDisconnect, binId}){
           </tr>
         ))}
         <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">TOTAL VALUE</td><td className="quo-manual-total-val">{calc.totalValue.toLocaleString("id-ID")}</td></tr>
-        {hasDisc && (
+        {hasDisc && (Number(quoManualDiscPct)||0)>0 && (
           <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">DISC.{quoManualDiscPct}%</td><td className="quo-manual-total-val">{calc.discAmt.toLocaleString("id-ID")}</td></tr>
         )}
-        <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">PPN {quoPpnPct}%</td><td className="quo-manual-total-val">{Math.round(calc.ppn).toLocaleString("id-ID")}</td></tr>
+        {quoPpnExclude ? (
+          calc.totalValue>0 && <tr className="quo-manual-total-row"><td colSpan={4}></td><td colSpan={2} style={{textAlign:"right",fontStyle:"italic"}}>Exclude PPN</td></tr>
+        ) : (
+          (Number(quoPpnPct)||0)>0 && calc.ppn>0 && <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">PPN {quoPpnPct}%</td><td className="quo-manual-total-val">{Math.round(calc.ppn).toLocaleString("id-ID")}</td></tr>
+        )}
         <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl quo-manual-grandtotal">TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(calc.total).toLocaleString("id-ID")}</td></tr>
       </tbody>
     </table>
@@ -2253,8 +2438,85 @@ function MainApp({onDisconnect, binId}){
     XLSX.writeFile(wb, "Laporan_Tahunan_"+fnameUser+"_"+year+"_"+today.toISOString().slice(0,10)+".xlsx");
   };
 
+  const renderSignerCard = ()=>(
+          <div className="signer-card no-print">
+            <h2 className="section" style={{marginTop:0}}>Penanda Tangan {helpBtn("ttd")}</h2>
+            <label>Pilih yang tersimpan</label>
+            <select value={signers.activeId||""} onChange={e=>selectSigner(e.target.value)}>
+              <option value="">Default (nama profil, tanpa gambar TTD)</option>
+              {signers.list.map(x=>(<option key={x.id} value={x.id}>{x.name}{x.img?" \u2022 ada TTD":""}</option>))}
+            </select>
+            <div className="logform" style={{marginTop:12}}>
+              <div>
+                <label>Nama Penanda Tangan</label>
+                <input type="text" value={signerDraftName} onChange={e=>setSignerDraftName(e.target.value)} placeholder="mis. M. Rizal Fauzi" />
+              </div>
+              <div>
+                <label>Gambar Tanda Tangan (JPG/PNG)</label>
+                <label className="upload-btn" htmlFor="signerFileInput" style={{display:"inline-block",margin:0}}>{signerDraftImg?"Ganti Gambar TTD":"\u2191 Upload Gambar TTD"}</label>
+                <input id="signerFileInput" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style={{display:"none"}}
+                  onChange={e=>{ const f = e.target.files && e.target.files[0]; if(f) handleSignerFile(f); e.target.value=""; }} />
+              </div>
+            </div>
+            {signerDraftImg && (
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+                <img src={signerDraftImg} alt="Pratinjau TTD" style={{height:54,maxWidth:190,objectFit:"contain",background:"#fff",border:"1px dashed var(--line)",padding:4}} />
+                <button type="button" className="icon-btn" onClick={()=>setSignerDraftImg(null)}>Hapus Gambar</button>
+              </div>
+            )}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button type="button" className="icon-btn" onClick={()=>saveSigner(false)}>{signerEditingId?"Simpan Perubahan":"Simpan Penanda Tangan"}</button>
+              {signerEditingId && <button type="button" className="icon-btn" onClick={()=>saveSigner(true)}>Simpan sebagai Baru</button>}
+              {signerEditingId && <button type="button" className="icon-btn" onClick={deleteSigner} style={{color:"var(--red)"}}>Hapus</button>}
+            </div>
+            <div className="extract-note">Nama & TTD lama tetap tersimpan sebagai pilihan. Data ini tersimpan di browser perangkat ini (tidak ikut Cloud), jadi upload TTD sekali per perangkat.</div>
+          </div>
+  );
+  const renderQuoSettings = ()=>(
+    <div className="signer-card no-print">
+      <h2 className="section" style={{marginTop:0}}>Pengaturan Penawaran {helpBtn("penawaran")}</h2>
+      <div className="logform">
+        <div><label>Tarif PPN standar (%)</label>
+          <input type="text" inputMode="decimal" value={qsDraft.ppn} onChange={e=>setQsDraft(d=>({...d, ppn:e.target.value}))} /></div>
+        <div><label>Cabang (default)</label>
+          <input type="text" value={qsDraft.branch} onChange={e=>setQsDraft(d=>({...d, branch:e.target.value}))} /></div>
+        <div><label>Customer PO No default (format AIS)</label>
+          <input type="text" value={qsDraft.custPo} onChange={e=>setQsDraft(d=>({...d, custPo:e.target.value}))} /></div>
+        <div><label>Catatan masa berlaku (format Manual)</label>
+          <input type="text" value={qsDraft.validity} onChange={e=>setQsDraft(d=>({...d, validity:e.target.value}))} placeholder="kosongkan untuk menyembunyikan" /></div>
+      </div>
+      <label style={{display:"flex",alignItems:"center",gap:8,textTransform:"none",letterSpacing:0,fontSize:12.5,color:"var(--ink)"}}>
+        <input type="checkbox" checked={!!qsDraft.watermark} onChange={e=>setQsDraft(d=>({...d, watermark:e.target.checked}))} style={{width:18,height:18}} />
+        Tampilkan watermark logo Berca di dokumen penawaran
+      </label>
+      <div style={{marginTop:12}}>
+        <button type="button" className="icon-btn" onClick={saveQuoSettings} disabled={!qsDirty}>{qsDirty ? "Simpan Pengaturan Penawaran" : "Tersimpan"}</button>
+      </div>
+      <div className="extract-note">Berlaku untuk penawaran baru; penawaran lama tetap pakai nilai saat dibuat. Tersimpan di Cloud.</div>
+    </div>
+  );
+  const renderBgSettings = ()=>(
+    <div className="signer-card no-print">
+      <h2 className="section" style={{marginTop:0}}>Tampilan & Background {helpBtn("bg")}</h2>
+      {BG_VIEWS.map(v=>(
+        <div key={v.k} className="bg-row">
+          <div className="bg-thumb" style={theme.bgs[v.k] ? {backgroundImage:'url("'+theme.bgs[v.k]+'")'} : undefined}>{!theme.bgs[v.k] && "polos"}</div>
+          <div style={{flex:1,fontWeight:700,fontSize:13}}>{v.label}</div>
+          <span className="icon-btn" onClick={()=>{ const el = document.getElementById("bgfile_"+v.k); if(el) el.click(); }}>{theme.bgs[v.k] ? "Ganti" : "Pilih Gambar"}</span>
+          <input id={"bgfile_"+v.k} type="file" accept="image/*" style={{display:"none"}}
+            onChange={e=>{ const f = e.target.files && e.target.files[0]; if(f) handleBgFile(v.k, f); e.target.value=""; }} />
+          {theme.bgs[v.k] && <span className="icon-btn" onClick={()=>removeBg(v.k)}>Hapus</span>}
+        </div>
+      ))}
+      <label style={{marginTop:14}}>Kepekatan bubble tulisan: {Math.round(theme.bubble*100)}%</label>
+      <input type="range" min="70" max="100" step="1" value={Math.round(theme.bubble*100)}
+        onChange={e=>persistTheme({...theme, bubble:Number(e.target.value)/100})} style={{width:"100%"}} />
+      <div className="extract-note">Tersimpan di browser perangkat ini (tidak ikut Cloud), jadi upload ulang kalau pindah HP atau PC. Background tidak ikut tercetak ke PDF.</div>
+    </div>
+  );
+
   return (
-    <div className="wrap">
+    <div className={"wrap"+(bgNow?" has-bg":"")} style={bgNow ? {"--bubble":theme.bubble} : undefined}>
       <div className="masthead">
         <div>
           <h1>Tracker VCS</h1>
@@ -2364,7 +2626,16 @@ function MainApp({onDisconnect, binId}){
         <div className={"maintab-btn"+(mainView==="report"?" on":"")} onClick={()=>setMainView("report")}>Laporan Tahunan {year}</div>
         <div className={"maintab-btn"+(mainView==="quotation"?" on":"")} onClick={()=>setMainView("quotation")}>Buat Penawaran</div>
         <div className={"maintab-btn"+(mainView==="faq"?" on":"")} onClick={()=>setMainView("faq")}>Panduan</div>
+        <div className={"maintab-btn"+(mainView==="settings"?" on":"")} onClick={()=>setMainView("settings")}>Pengaturan</div>
       </div>
+      {mainView!=="settings" && (
+        <div className="bg-quick no-print">
+          <span className="icon-btn" onClick={()=>{ const el = document.getElementById("bgfile_quick"); if(el) el.click(); }}>Background menu ini: {theme.bgs[mainView] ? "ganti" : "pilih gambar"}</span>
+          {theme.bgs[mainView] && <span className="icon-btn" onClick={()=>removeBg(mainView)}>hapus</span>}
+          <input id="bgfile_quick" type="file" accept="image/*" style={{display:"none"}}
+            onChange={e=>{ const f = e.target.files && e.target.files[0]; if(f) handleBgFile(mainView, f); e.target.value=""; }} />
+        </div>
+      )}
 
       {mainView==="input" && (
       <React.Fragment>
@@ -3015,6 +3286,10 @@ function MainApp({onDisconnect, binId}){
             <div className={"type-btn"+(quoFormat==="ais"?" active-visit":"")} onClick={()=>switchQuoFormat("ais")}>Format AIS System</div>
             <div className={"type-btn"+(quoFormat==="manual"?" active-call":"")} onClick={()=>switchQuoFormat("manual")}>Format Manual BMP</div>
           </div>
+          <details className="no-print" style={{marginBottom:18}}>
+            <summary style={{cursor:"pointer",fontFamily:"var(--sans)",fontWeight:700,fontSize:12.5}}>Pengaturan penawaran (PPN standar, cabang, masa berlaku, watermark)</summary>
+            {renderQuoSettings()}
+          </details>
 
           <div className="logform">
             <div>
@@ -3121,7 +3396,7 @@ function MainApp({onDisconnect, binId}){
                 <input type="number" min="0" max="100" step="0.1" value={quoDiscPct} onChange={e=>setQuoDiscPct(e.target.value)} style={{width:90}} />
                 <span>PPN (%):</span>
                 <input type="number" min="0" max="100" step="0.1" value={quoPpnPct} onChange={e=>setQuoPpnPct(e.target.value)} style={{width:90}} />
-                <button type="button" className="icon-btn" onClick={()=>setQuoPpnPct(quoPpnPct==="0"?"11":"0")}>{quoPpnPct==="0"?"Pakai PPN 11%":"Kawasan Berikat (PPN 0%)"}</button>
+                <button type="button" className="icon-btn" onClick={cyclePpnMode}>Mode: {ppnModeLabel}</button>
               </div>
             </React.Fragment>
           ) : (
@@ -3163,7 +3438,7 @@ function MainApp({onDisconnect, binId}){
               <div className="sales-target-row">
                 <span>PPN (%) — berlaku untuk semua section:</span>
                 <input type="number" min="0" max="100" step="0.1" value={quoPpnPct} onChange={e=>setQuoPpnPct(e.target.value)} style={{width:90}} />
-                <button type="button" className="icon-btn" onClick={()=>setQuoPpnPct(quoPpnPct==="0"?"11":"0")}>{quoPpnPct==="0"?"Pakai PPN 11%":"Kawasan Berikat (PPN 0%)"}</button>
+                <button type="button" className="icon-btn" onClick={cyclePpnMode}>Mode: {ppnModeLabel}</button>
               </div>
             </React.Fragment>
           )}
@@ -3238,45 +3513,14 @@ function MainApp({onDisconnect, binId}){
             )}
           </div>
 
-          <div className="signer-card no-print">
-            <h2 className="section" style={{marginTop:0}}>Penanda Tangan</h2>
-            <label>Pilih yang tersimpan</label>
-            <select value={signers.activeId||""} onChange={e=>selectSigner(e.target.value)}>
-              <option value="">Default (nama profil, tanpa gambar TTD)</option>
-              {signers.list.map(x=>(<option key={x.id} value={x.id}>{x.name}{x.img?" \u2022 ada TTD":""}</option>))}
-            </select>
-            <div className="logform" style={{marginTop:12}}>
-              <div>
-                <label>Nama Penanda Tangan</label>
-                <input type="text" value={signerDraftName} onChange={e=>setSignerDraftName(e.target.value)} placeholder="mis. M. Rizal Fauzi" />
-              </div>
-              <div>
-                <label>Gambar Tanda Tangan (JPG/PNG)</label>
-                <label className="upload-btn" htmlFor="signerFileInput" style={{display:"inline-block",margin:0}}>{signerDraftImg?"Ganti Gambar TTD":"\u2191 Upload Gambar TTD"}</label>
-                <input id="signerFileInput" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style={{display:"none"}}
-                  onChange={e=>{ const f = e.target.files && e.target.files[0]; if(f) handleSignerFile(f); e.target.value=""; }} />
-              </div>
-            </div>
-            {signerDraftImg && (
-              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
-                <img src={signerDraftImg} alt="Pratinjau TTD" style={{height:54,maxWidth:190,objectFit:"contain",background:"#fff",border:"1px dashed var(--line)",padding:4}} />
-                <button type="button" className="icon-btn" onClick={()=>setSignerDraftImg(null)}>Hapus Gambar</button>
-              </div>
-            )}
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              <button type="button" className="icon-btn" onClick={()=>saveSigner(false)}>{signerEditingId?"Simpan Perubahan":"Simpan Penanda Tangan"}</button>
-              {signerEditingId && <button type="button" className="icon-btn" onClick={()=>saveSigner(true)}>Simpan sebagai Baru</button>}
-              {signerEditingId && <button type="button" className="icon-btn" onClick={deleteSigner} style={{color:"var(--red)"}}>Hapus</button>}
-            </div>
-            <div className="extract-note">Nama & TTD lama tetap tersimpan sebagai pilihan. Data ini tersimpan di browser perangkat ini (tidak ikut Cloud), jadi upload TTD sekali per perangkat.</div>
-          </div>
+          {renderSignerCard()}
 
           <h2 className="section no-print">Preview</h2>
 
           {quoFormat==="ais" ? (
             <div className="quo-preview-scroll">
             <div id="quotationPrintArea" className="quo-doc quo-ais">
-              <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />
+              {quoSettings.watermark && <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />}
               <div className="quo-ais-header-block">
                 <img src={BERCA_LOGO_B64} alt="BERCA" className="quo-logo-img" />
                 <div className="quo-ais-company">PT. BERCA<br/>MANDIRI PERKASA</div>
@@ -3321,8 +3565,10 @@ function MainApp({onDisconnect, binId}){
               </table>
               <div className="quo-ais-summary">
                 <div><span>Total Value</span><span>IDR {quoAisCalc.totalValue.toLocaleString("id-ID")}</span></div>
-                <div><span>Disc {quoAisCalc.discPct}%</span><span>IDR {Math.round(quoAisCalc.discAmt).toLocaleString("id-ID")}</span></div>
-                <div><span>PPN {quoAisCalc.ppnPct}%</span><span>IDR {Math.round(quoAisCalc.ppn).toLocaleString("id-ID")}</span></div>
+                {quoAisCalc.discPct>0 && <div><span>Disc {quoAisCalc.discPct}%</span><span>IDR {Math.round(quoAisCalc.discAmt).toLocaleString("id-ID")}</span></div>}
+                {quoPpnExclude
+                  ? <div style={{justifyContent:"flex-end",fontStyle:"italic"}}><span>Exclude PPN</span></div>
+                  : (quoAisCalc.ppnPct>0 && <div><span>PPN {quoAisCalc.ppnPct}%</span><span>IDR {Math.round(quoAisCalc.ppn).toLocaleString("id-ID")}</span></div>)}
                 <div className="quo-ais-summary-total"><span>Total Value</span><span>IDR {Math.round(quoAisCalc.total).toLocaleString("id-ID")}</span></div>
               </div>
               <div className="quo-ais-signblock">
@@ -3346,7 +3592,7 @@ function MainApp({onDisconnect, binId}){
           ) : (
             <div className="quo-preview-scroll">
             <div id="quotationPrintArea" className="quo-doc quo-manual">
-              <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />
+              {quoSettings.watermark && <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />}
               <img src={BERCA_HEADER_B64} alt="PT. Berca Mandiri Perkasa" className="quo-manual-header-img" />
               <div className="quo-title" style={{textAlign:"center",margin:"10px 0"}}>QUOTATION</div>
               <div className="quo-manual-info">
@@ -3368,7 +3614,7 @@ function MainApp({onDisconnect, binId}){
               {renderManualSection("SERVICE", quoManualCalc.service, false)}
 
               <div className="quo-manual-signblock">
-                <div className="quo-manual-note-italic">Penawaran Berlaku 2 minggu.</div>
+                {quoSettings.validity && <div className="quo-manual-note-italic">{quoSettings.validity}</div>}
                 <div className="quo-manual-sign-row">
                   <div>PT. BERCA MANDIRI PERKASA</div>
                   <div>DI SETUJUI CUSTOMER</div>
@@ -3382,6 +3628,16 @@ function MainApp({onDisconnect, binId}){
             </div>
             </div>
           )}
+        </React.Fragment>
+      )}
+
+      {mainView==="settings" && (
+        <React.Fragment>
+          <h2 className="section" style={{marginTop:0}}>Pengaturan Tracker VCS {helpBtn("umum")}</h2>
+          <div className="extract-note" style={{marginTop:0}}>Semua pengaturan di sini juga bisa diubah langsung dari menu terkait (mis. Buat Penawaran). Klik tanda tanya (?) untuk petunjuk pengisian.</div>
+          {renderQuoSettings()}
+          {renderSignerCard()}
+          {renderBgSettings()}
         </React.Fragment>
       )}
 
@@ -3464,6 +3720,15 @@ function MainApp({onDisconnect, binId}){
             <p>Bisa. Gunakan panah di sebelah "Tahun" untuk pindah ke tahun berikutnya. Data tersimpan terpisah per tahun dan kuartal, jadi tracker ini bisa terus dipakai untuk tahun-tahun mendatang tanpa data lama tertimpa.</p>
           </div>
         </React.Fragment>
+      )}
+
+      {helpKey && HELP[helpKey] && (
+        <div className="help-overlay no-print" onClick={()=>setHelpKey(null)}>
+          <div className="help-box" onClick={e=>e.stopPropagation()}>
+            <div className="help-title"><span>{HELP[helpKey].title}</span><span className="help-close" role="button" onClick={()=>setHelpKey(null)}>&times;</span></div>
+            <div className="help-body">{HELP[helpKey].body}</div>
+          </div>
+        </div>
       )}
 
     </div>
