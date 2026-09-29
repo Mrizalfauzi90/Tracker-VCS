@@ -2415,16 +2415,16 @@ function MainApp({onDisconnect, binId}){
             <td>{r.remark}</td>
           </tr>
         ))}
-        <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">TOTAL VALUE</td><td className="quo-manual-total-val">{calc.totalValue.toLocaleString("id-ID")}</td></tr>
+        <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl">TOTAL VALUE</td><td className="quo-manual-total-val">{calc.totalValue.toLocaleString("id-ID")}</td><td></td></tr>
         {hasDisc && (Number(quoManualDiscPct)||0)>0 && (
-          <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">DISC.{quoManualDiscPct}%</td><td className="quo-manual-total-val">{calc.discAmt.toLocaleString("id-ID")}</td></tr>
+          <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl">DISC.{quoManualDiscPct}%</td><td className="quo-manual-total-val">{calc.discAmt.toLocaleString("id-ID")}</td><td></td></tr>
         )}
         {quoPpnExclude ? (
-          calc.totalValue>0 && <tr className="quo-manual-total-row"><td colSpan={4}></td><td colSpan={2} style={{textAlign:"right",fontStyle:"italic"}}>Exclude PPN</td></tr>
+          calc.totalValue>0 && <tr className="quo-manual-total-row"><td colSpan={4}></td><td style={{textAlign:"right",fontStyle:"italic"}}>Exclude PPN</td><td></td></tr>
         ) : (
-          (Number(quoPpnPct)||0)>0 && calc.ppn>0 && <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl">PPN {quoPpnPct}%</td><td className="quo-manual-total-val">{Math.round(calc.ppn).toLocaleString("id-ID")}</td></tr>
+          (Number(quoPpnPct)||0)>0 && calc.ppn>0 && <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl">PPN {quoPpnPct}%</td><td className="quo-manual-total-val">{Math.round(calc.ppn).toLocaleString("id-ID")}</td><td></td></tr>
         )}
-        <tr className="quo-manual-total-row"><td colSpan={4}></td><td className="quo-manual-total-lbl quo-manual-grandtotal">TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(calc.total).toLocaleString("id-ID")}</td></tr>
+        <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl quo-manual-grandtotal">TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(calc.total).toLocaleString("id-ID")}</td><td></td></tr>
       </tbody>
     </table>
   );
