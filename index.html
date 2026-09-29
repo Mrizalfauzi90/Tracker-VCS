@@ -152,6 +152,8 @@
   .bar-fill.sales{background:var(--blue);}
 
   .maintabs{display:flex;flex-wrap:wrap;gap:0;margin-bottom:20px;border:2.5px solid var(--ink);}
+  .greeting-bar{font-family:var(--sans);font-weight:700;font-size:13px;color:var(--ink);background:var(--paper-raise);border:2px solid var(--ink);padding:8px 14px;margin:-10px 0 16px;display:inline-block;}
+  .wrap.has-bg > .greeting-bar{background:rgba(255,255,255,var(--bubble,.92));}
   .maintab-btn{flex:1 1 auto;padding:12px 8px;text-align:center;cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:0.5px;background:var(--paper-raise);text-transform:uppercase;transition:background .15s ease,color .15s ease;}
   .maintab-btn:hover{background:#EAE2CC;}
   .maintab-btn.on{background:var(--ink);color:#fff;}
@@ -214,9 +216,10 @@
   .quo-manual-sign-space{height:58px;display:flex;align-items:flex-end;justify-content:flex-start;}
   .signer-card{border:2.5px solid var(--ink);background:var(--paper-raise);padding:16px;margin-bottom:20px;}
   /* Bubble: kalau menu punya background gambar, tiap blok isi dialasi kotak semi-solid supaya tulisan tetap jelas */
-  .wrap.has-bg > *:not(.help-overlay):not(.maintabs){background:rgba(250,246,236,var(--bubble,.92));border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.22);margin-bottom:14px !important;}
-  .wrap.has-bg > *:not(.help-overlay):not(.maintabs):not(.signer-card){padding:12px 16px;}
+  .wrap.has-bg > *:not(.help-overlay):not(.maintabs):not(.add-btn):not(button){background:rgba(250,246,236,var(--bubble,.92));border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.22);margin-bottom:14px !important;}
+  .wrap.has-bg > *:not(.help-overlay):not(.maintabs):not(.signer-card):not(.add-btn):not(button){padding:12px 16px;}
   .wrap.has-bg > .signer-card{background:rgba(255,255,255,var(--bubble,.92));}
+  .wrap.has-bg > .add-btn{box-shadow:0 2px 12px rgba(0,0,0,.32);}
   .wrap.has-bg > .maintabs{box-shadow:0 2px 12px rgba(0,0,0,.22);}
   .bg-quick{display:flex;justify-content:flex-end;gap:6px;margin:-10px 0 14px;}
   .bg-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1.5px solid var(--line);}
@@ -231,6 +234,10 @@
   .help-body p{margin:0 0 10px;}
   .help-body ol,.help-body ul{margin:0 0 10px;padding-left:20px;}
   .help-body li{margin-bottom:6px;}
+  .dupe-warn{grid-column:1/-1;color:var(--red);font-family:var(--sans);font-size:11.5px;font-weight:700;margin-top:6px;}
+  .auto-backup-list{display:flex;flex-direction:column;gap:0;}
+  .auto-backup-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1.5px solid var(--line);}
+  .auto-backup-date{flex:1;font-weight:700;font-size:12.5px;text-transform:capitalize;}
   .quo-preview-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px 4px;}
   @media screen and (max-width:840px){
     .quo-preview-scroll::after{content:"\2194 geser untuk lihat semua kolom";display:block;text-align:center;font-family:var(--sans);font-size:10.5px;color:var(--muted);margin-top:6px;}
@@ -747,6 +754,65 @@ function MainApp({onDisconnect, binId}){
       setDownloadBackupBusy(false);
     }
   };
+  // ===== Backup otomatis harian: jalan sendiri tiap kali app dibuka, tanpa perlu diklik =====
+  // Disimpan sebagai salinan penuh data Cloud (bukan file), supaya ada cadangan kalau data Cloud
+  // utama tertimpa/rusak. Menyimpan maksimal 7 salinan terakhir (1 per hari) supaya tidak menumpuk.
+  const [autoBackupList,setAutoBackupList] = useState([]);
+  const [autoBackupBusy,setAutoBackupBusy] = useState(false);
+  const [autoBackupErr,setAutoBackupErr] = useState("");
+  const [autoBackupMsg,setAutoBackupMsg] = useState("");
+  const refreshAutoBackupList = async()=>{
+    try{
+      const r = await window.storage.list("auto_backup_snap_");
+      const dates = (r && r.keys ? r.keys : []).map(k=>k.replace("auto_backup_snap_","")).sort().reverse();
+      setAutoBackupList(dates);
+      return dates;
+    }catch(e){ return []; }
+  };
+  useEffect(()=>{
+    (async()=>{
+      const todayStr = new Date().toISOString().slice(0,10);
+      let lastDate = "";
+      try{ const r = await window.storage.get("auto_backup_last_date"); lastDate = r && r.value ? r.value : ""; }catch(e){}
+      if(lastDate===todayStr){ refreshAutoBackupList(); return; }
+      try{
+        const cloudData = await window.__jsonbinReadAll();
+        const clean = {...cloudData}; delete clean._tracker_db; delete clean._created;
+        await window.storage.set("auto_backup_snap_"+todayStr, JSON.stringify(clean));
+        await window.storage.set("auto_backup_last_date", todayStr);
+        const dates = await refreshAutoBackupList();
+        // Buang cadangan lebih dari 7 hari supaya rapi
+        const toDrop = dates.slice(7);
+        for(const d of toDrop){ try{ await window.storage.delete("auto_backup_snap_"+d); }catch(e){} }
+        if(toDrop.length) refreshAutoBackupList();
+      }catch(e){ /* diam-diam gagal; tidak mengganggu pemakaian normal */ }
+    })();
+  },[]);
+  const restoreAutoBackup = async(dateStr)=>{
+    if(!window.confirm("PENTING: memulihkan cadangan tanggal "+dateStr+" akan MENIMPA SELURUH data Cloud saat ini (Visit, Penjualan, Odometer, Penawaran, Customer) dengan isi cadangan tanggal itu.\n\nData yang ditambahkan/diubah setelah tanggal "+dateStr+" akan HILANG.\n\nYakin mau lanjut?")) return;
+    if(!window.confirm("Konfirmasi sekali lagi: pulihkan cadangan "+dateStr+" dan timpa data Cloud sekarang?")) return;
+    setAutoBackupBusy(true); setAutoBackupErr(""); setAutoBackupMsg("");
+    try{
+      const r = await window.storage.get("auto_backup_snap_"+dateStr);
+      const snap = JSON.parse(r.value);
+      await window.__jsonbinWriteAll(snap);
+      setAutoBackupMsg("Cadangan "+dateStr+" berhasil dipulihkan. Halaman akan dimuat ulang...");
+      setTimeout(()=>{ window.location.reload(); }, 1500);
+    }catch(e){
+      setAutoBackupErr("Gagal memulihkan. Detail: " + (e && e.message ? e.message : String(e)));
+      setAutoBackupBusy(false);
+    }
+  };
+  const downloadAutoBackup = async(dateStr)=>{
+    try{
+      const r = await window.storage.get("auto_backup_snap_"+dateStr);
+      const blob = new Blob([r.value], {type:"application/json"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "TrackerVCS_AutoBackup_"+dateStr+".json";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    }catch(e){ setAutoBackupErr("Gagal mengunduh cadangan. Detail: " + (e && e.message ? e.message : String(e))); }
+  };
+
   const backupAgeLabel = useMemo(()=>{
     if(!lastBackupAt) return null;
     const days = Math.floor((Date.now()-new Date(lastBackupAt).getTime())/86400000);
@@ -1475,6 +1541,8 @@ function MainApp({onDisconnect, binId}){
     if(!saleCustomer.trim()){ setErr("Nama customer wajib diisi."); return; }
     const nominalNum = saleNominal!==""?Number(saleNominal):0;
     if(!nominalNum || nominalNum<=0){ setErr("Nominal penjualan wajib diisi dan lebih dari 0."); return; }
+    { const saleClash = findSaleDocNoClash(saleDocNo, null);
+      if(saleClash && !window.confirm("Nomor dokumen \""+saleDocNo.trim()+"\" sudah dipakai di penjualan customer \""+(saleClash.customer||"-")+"\" tanggal "+(saleClash.date||"-")+".\n\nTetap simpan dengan nomor yang sama?")) return; }
     const cleanParts = saleParts
       .map(p=>({partNo:(p.partNo||"").trim(), desc:(p.desc||"").trim(), qty:Number(p.qty)||0, unitPrice:Number(p.unitPrice)||0}))
       .filter(p=>p.partNo && p.qty>0);
@@ -1491,6 +1559,19 @@ function MainApp({onDisconnect, binId}){
   const addSalePartRow = ()=> setSaleParts(prev=>[...prev, {partNo:"", desc:"", qty:"", unitPrice:""}]);
   const updateSalePartRow = (idx, field, val)=> setSaleParts(prev=> prev.map((p,i)=> i===idx ? {...p,[field]:val} : p));
   const removeSalePartRow = (idx)=> setSaleParts(prev=> prev.filter((_,i)=>i!==idx));
+
+  const findSaleDocNoClash = (docNo, excludeId)=>{
+    const target = (docNo||"").trim().toLowerCase();
+    if(!target) return null;
+    for(const key of Object.keys(salesByKey)){
+      for(const s2 of (salesByKey[key]||[])){
+        if(s2.id===excludeId) continue;
+        if((s2.docNo||"").trim().toLowerCase()===target) return s2;
+      }
+    }
+    return null;
+  };
+  const saleDocNoClash = useMemo(()=>findSaleDocNoClash(saleDocNo, null),[saleDocNo, salesByKey]);
 
   const removeSaleEntry = (id)=>{
     const s = salesEntries.find(x=>x.id===id);
@@ -1989,6 +2070,13 @@ function MainApp({onDisconnect, binId}){
     persistTheme({...theme, bgs:nb});
   };
   const bgNow = theme.bgs[mainView] || null;
+  const greeting = useMemo(()=>{
+    const h = new Date().getHours();
+    if(h>=4 && h<11) return {text:"Selamat Pagi", icon:"\u{1F305}"};
+    if(h>=11 && h<15) return {text:"Selamat Siang", icon:"\u{2600}\u{FE0F}"};
+    if(h>=15 && h<18) return {text:"Selamat Sore", icon:"\u{1F307}"};
+    return {text:"Selamat Malam", icon:"\u{1F319}"};
+  },[]);
   useEffect(()=>{
     const b = document.body;
     if(bgNow){
@@ -2037,6 +2125,16 @@ function MainApp({onDisconnect, binId}){
           <li>Ganti penanda tangan lewat menu pilihan di atas.</li>
         </ol>
       </React.Fragment>) },
+    autobackup:{ title:"Cadangan Otomatis", body:(
+      <React.Fragment>
+        <p>Tracker VCS otomatis menyalin seluruh data Cloud sekali sehari, diam-diam, tiap kali dibuka. Tidak perlu diklik apa-apa.</p>
+        <ol>
+          <li>Daftar tanggal yang tersedia muncul di panel ini, maksimal 7 hari terakhir.</li>
+          <li><b>Unduh</b>: simpan cadangan tanggal itu sebagai file JSON ke HP/PC.</li>
+          <li><b>Pulihkan</b>: menimpa SELURUH data Cloud sekarang dengan isi cadangan tanggal itu. Data yang dibuat/diubah setelah tanggal itu akan hilang. Ada konfirmasi dua kali sebelum benar-benar jalan.</li>
+        </ol>
+        <p>Ini cadangan darurat kalau data Cloud utama rusak atau tertimpa. Tetap sesekali unduh manual lewat tombol "Backup Data Cloud (JSON)" di bagian atas untuk disimpan sendiri di luar Tracker VCS.</p>
+      </React.Fragment>) },
     bg:{ title:"Tampilan & Background", body:(
       <React.Fragment>
         <ol>
@@ -2056,6 +2154,20 @@ function MainApp({onDisconnect, binId}){
     else { setQuoPpnPct("0"); }
   };
   const ppnModeLabel = quoPpnExclude ? "Exclude PPN (klik: pakai PPN "+ppnDefault+"%)" : ((Number(quoPpnPct)||0)===0 ? "Kawasan Berikat 0% (klik: Exclude PPN)" : "PPN "+quoPpnPct+"% (klik: Kawasan Berikat)");
+
+  // Cek nomor dokumen dobel di semua tahun yang sudah pernah dibuka di perangkat ini
+  const findDocNoClash = (docNo, excludeId)=>{
+    const target = (docNo||"").trim().toLowerCase();
+    if(!target) return null;
+    for(const key of Object.keys(quotationsByKey)){
+      for(const q of (quotationsByKey[key]||[])){
+        if(q.id===excludeId) continue;
+        if((q.docNo||"").trim().toLowerCase()===target) return q;
+      }
+    }
+    return null;
+  };
+  const quoDocNoClash = useMemo(()=>findDocNoClash(quoDocNo, quoEditingId),[quoDocNo, quoEditingId, quotationsByKey]);
 
   const exportQuotationToPdf = ()=>{
     const originalTitle = document.title;
@@ -2080,6 +2192,8 @@ function MainApp({onDisconnect, binId}){
   });
   const saveQuotation = ()=>{
     if(!quoDocNo.trim()){ setErr("Isi No. Dokumen dulu sebelum menyimpan penawaran."); return; }
+    { const clash = findDocNoClash(quoDocNo, quoEditingId);
+      if(clash && !window.confirm("Nomor dokumen \""+quoDocNo.trim()+"\" sudah dipakai di penawaran customer \""+(clash.customerName||"-")+"\" tanggal "+(clash.docDate||"-")+".\n\nTetap simpan dengan nomor yang sama?")) return; }
     if(!quoDocDate){ setErr("Isi Tanggal Dokumen dulu sebelum menyimpan penawaran."); return; }
     setErr("");
     const obj = buildQuotationObj();
@@ -2441,18 +2555,18 @@ function MainApp({onDisconnect, binId}){
   const renderSignerCard = ()=>(
           <div className="signer-card no-print">
             <h2 className="section" style={{marginTop:0}}>Penanda Tangan {helpBtn("ttd")}</h2>
-            <label>Pilih yang tersimpan</label>
+            <label>✍️ Pilih yang tersimpan</label>
             <select value={signers.activeId||""} onChange={e=>selectSigner(e.target.value)}>
               <option value="">Default (nama profil, tanpa gambar TTD)</option>
               {signers.list.map(x=>(<option key={x.id} value={x.id}>{x.name}{x.img?" \u2022 ada TTD":""}</option>))}
             </select>
             <div className="logform" style={{marginTop:12}}>
               <div>
-                <label>Nama Penanda Tangan</label>
+                <label>✍️ Nama Penanda Tangan</label>
                 <input type="text" value={signerDraftName} onChange={e=>setSignerDraftName(e.target.value)} placeholder="mis. M. Rizal Fauzi" />
               </div>
               <div>
-                <label>Gambar Tanda Tangan (JPG/PNG)</label>
+                <label>✍️ Gambar Tanda Tangan (JPG/PNG)</label>
                 <label className="upload-btn" htmlFor="signerFileInput" style={{display:"inline-block",margin:0}}>{signerDraftImg?"Ganti Gambar TTD":"\u2191 Upload Gambar TTD"}</label>
                 <input id="signerFileInput" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style={{display:"none"}}
                   onChange={e=>{ const f = e.target.files && e.target.files[0]; if(f) handleSignerFile(f); e.target.value=""; }} />
@@ -2476,13 +2590,13 @@ function MainApp({onDisconnect, binId}){
     <div className="signer-card no-print">
       <h2 className="section" style={{marginTop:0}}>Pengaturan Penawaran {helpBtn("penawaran")}</h2>
       <div className="logform">
-        <div><label>Tarif PPN standar (%)</label>
+        <div><label>💸 Tarif PPN standar (%)</label>
           <input type="text" inputMode="decimal" value={qsDraft.ppn} onChange={e=>setQsDraft(d=>({...d, ppn:e.target.value}))} /></div>
-        <div><label>Cabang (default)</label>
+        <div><label>🏪 Cabang (default)</label>
           <input type="text" value={qsDraft.branch} onChange={e=>setQsDraft(d=>({...d, branch:e.target.value}))} /></div>
-        <div><label>Customer PO No default (format AIS)</label>
+        <div><label>📄 Customer PO No default (format AIS)</label>
           <input type="text" value={qsDraft.custPo} onChange={e=>setQsDraft(d=>({...d, custPo:e.target.value}))} /></div>
-        <div><label>Catatan masa berlaku (format Manual)</label>
+        <div><label>⏳ Catatan masa berlaku (format Manual)</label>
           <input type="text" value={qsDraft.validity} onChange={e=>setQsDraft(d=>({...d, validity:e.target.value}))} placeholder="kosongkan untuk menyembunyikan" /></div>
       </div>
       <label style={{display:"flex",alignItems:"center",gap:8,textTransform:"none",letterSpacing:0,fontSize:12.5,color:"var(--ink)"}}>
@@ -2512,6 +2626,32 @@ function MainApp({onDisconnect, binId}){
       <input type="range" min="70" max="100" step="1" value={Math.round(theme.bubble*100)}
         onChange={e=>persistTheme({...theme, bubble:Number(e.target.value)/100})} style={{width:"100%"}} />
       <div className="extract-note">Tersimpan di browser perangkat ini (tidak ikut Cloud), jadi upload ulang kalau pindah HP atau PC. Background tidak ikut tercetak ke PDF.</div>
+    </div>
+  );
+
+  const renderAutoBackupPanel = ()=>(
+    <div className="signer-card no-print">
+      <h2 className="section" style={{marginTop:0}}>Cadangan Otomatis {helpBtn("autobackup")}</h2>
+      <div className="extract-note" style={{marginTop:0}}>
+        Setiap kali Tracker VCS dibuka, seluruh data Cloud otomatis disalin diam-diam (maksimal 1x per hari, disimpan 7 hari terakhir).
+        Ini cadangan darurat kalau data Cloud utama rusak/tertimpa — bukan pengganti tombol "Backup Data Cloud (JSON)" di atas yang tetap perlu diunduh sendiri sesekali untuk disimpan di HP/PC.
+      </div>
+      {autoBackupList.length===0 ? (
+        <div style={{fontSize:12.5,color:"var(--muted)",fontStyle:"italic"}}>Belum ada cadangan otomatis (baru dibuat pertama kali hari ini).</div>
+      ) : (
+        <div className="auto-backup-list">
+          {autoBackupList.map(d=>(
+            <div key={d} className="auto-backup-row">
+              <span className="auto-backup-date">{new Date(d+"T00:00:00").toLocaleDateString('id-ID',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</span>
+              <span className="icon-btn" onClick={()=>downloadAutoBackup(d)}>Unduh</span>
+              <span className="icon-btn" style={{color:"var(--red)"}} onClick={()=>restoreAutoBackup(d)}>Pulihkan</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {autoBackupBusy && <div style={{fontSize:12,color:"var(--muted)",marginTop:8}}>Memulihkan...</div>}
+      {autoBackupErr && <div style={{color:"var(--red)",fontSize:12,fontWeight:600,marginTop:8}}>{autoBackupErr}</div>}
+      {autoBackupMsg && <div style={{color:"var(--green)",fontSize:12,fontWeight:600,marginTop:8}}>{autoBackupMsg}</div>}
     </div>
   );
 
@@ -2547,6 +2687,7 @@ function MainApp({onDisconnect, binId}){
         </div>
         <div className="date">{today.toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
       </div>
+      <div className="greeting-bar no-print">{greeting.icon} {greeting.text}{profile.name ? ", "+profile.name.split(" ")[0]+"!" : "!"}</div>
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:4}}>
         <div className="cloud-badge" onClick={()=>{ if(window.confirm("Putuskan koneksi cloud di perangkat ini? Data di cloud tetap aman, cuma perlu disambungkan ulang lain kali.")) onDisconnect(); }} title="Klik untuk memutus/mengganti koneksi cloud di perangkat ini">
@@ -2622,11 +2763,11 @@ function MainApp({onDisconnect, binId}){
       )}
 
       <div className="maintabs">
-        <div className={"maintab-btn"+(mainView==="input"?" on":"")} onClick={()=>setMainView("input")}>Input & Kuartal</div>
-        <div className={"maintab-btn"+(mainView==="report"?" on":"")} onClick={()=>setMainView("report")}>Laporan Tahunan {year}</div>
-        <div className={"maintab-btn"+(mainView==="quotation"?" on":"")} onClick={()=>setMainView("quotation")}>Buat Penawaran</div>
-        <div className={"maintab-btn"+(mainView==="faq"?" on":"")} onClick={()=>setMainView("faq")}>Panduan</div>
-        <div className={"maintab-btn"+(mainView==="settings"?" on":"")} onClick={()=>setMainView("settings")}>Pengaturan</div>
+        <div className={"maintab-btn"+(mainView==="input"?" on":"")} onClick={()=>setMainView("input")}>📝 Input & Kuartal</div>
+        <div className={"maintab-btn"+(mainView==="report"?" on":"")} onClick={()=>setMainView("report")}>📊 Laporan Tahunan {year}</div>
+        <div className={"maintab-btn"+(mainView==="quotation"?" on":"")} onClick={()=>setMainView("quotation")}>🧾 Buat Penawaran</div>
+        <div className={"maintab-btn"+(mainView==="faq"?" on":"")} onClick={()=>setMainView("faq")}>❓ Panduan</div>
+        <div className={"maintab-btn"+(mainView==="settings"?" on":"")} onClick={()=>setMainView("settings")}>⚙️ Pengaturan</div>
       </div>
       {mainView!=="settings" && (
         <div className="bg-quick no-print">
@@ -2704,22 +2845,22 @@ function MainApp({onDisconnect, binId}){
       <h2 className="section">Odometer Harian — {quarter.label}</h2>
       <div className="logform">
         <div>
-          <label>Tanggal</label>
+          <label>📅 Tanggal</label>
           <input ref={odoDateRef} type="date" value={odoDate} onChange={e=>setOdoDate(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); jamPergiRef.current && jamPergiRef.current.focus(); } }} />
         </div>
         <div>
-          <label>Jam Berangkat</label>
+          <label>⏰ Jam Berangkat</label>
           <input ref={jamPergiRef} type="time" value={jamPergi} onChange={e=>setJamPergi(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); odoBeforeRef.current && odoBeforeRef.current.focus(); } }} />
         </div>
         <div>
-          <label>Odometer Berangkat (km)</label>
+          <label>🛣️ Odometer Berangkat (km)</label>
           <input ref={odoBeforeRef} type="number" min="0" value={odoBefore} onChange={e=>setOdoBefore(e.target.value)} placeholder="mis. 12345"
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); bbmBeforeRef.current && bbmBeforeRef.current.focus(); } }} />
         </div>
         <div>
-          <label>Bensin Berangkat</label>
+          <label>⛽ Bensin Berangkat</label>
           <select ref={bbmBeforeRef} value={bbmBefore} onChange={e=>setBbmBefore(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); jamPulangRef.current && jamPulangRef.current.focus(); } }}>
             <option value="">-</option>
@@ -2727,17 +2868,17 @@ function MainApp({onDisconnect, binId}){
           </select>
         </div>
         <div>
-          <label>Jam Pulang</label>
+          <label>⏰ Jam Pulang</label>
           <input ref={jamPulangRef} type="time" value={jamPulang} onChange={e=>setJamPulang(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); odoAfterRef.current && odoAfterRef.current.focus(); } }} />
         </div>
         <div>
-          <label>Odometer Pulang (km)</label>
+          <label>🛣️ Odometer Pulang (km)</label>
           <input ref={odoAfterRef} type="number" min="0" value={odoAfter} onChange={e=>setOdoAfter(e.target.value)} placeholder="mis. 12400"
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); bbmAfterRef.current && bbmAfterRef.current.focus(); } }} />
         </div>
         <div className="full">
-          <label>Bensin Pulang</label>
+          <label>⛽ Bensin Pulang</label>
           <select ref={bbmAfterRef} value={bbmAfter} onChange={e=>setBbmAfter(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); odoSaveBtnRef.current && odoSaveBtnRef.current.focus(); } }}>
             <option value="">-</option>
@@ -2745,11 +2886,11 @@ function MainApp({onDisconnect, binId}){
           </select>
         </div>
       </div>
-      <button ref={odoSaveBtnRef} className="add-btn" onClick={addOdoRecord}>Simpan Odometer</button>
+      <button ref={odoSaveBtnRef} className="add-btn" onClick={addOdoRecord}>🛣️ Simpan Odometer</button>
 
       <div className="search-box" style={{marginTop:14, display:"flex", gap:8, alignItems:"flex-end"}}>
         <div style={{flex:1}}>
-          <label>Cari Tanggal (format: 2026 / 2026-08 / 2026-08-13)</label>
+          <label>📅 Cari Tanggal (format: 2026 / 2026-08 / 2026-08-13)</label>
           <input type="text" value={odoSearch} onChange={e=>setOdoSearch(e.target.value)} placeholder="cth. 2026-08 untuk bulan Agustus" />
         </div>
         {!odoSearchClean && (
@@ -2767,20 +2908,20 @@ function MainApp({onDisconnect, binId}){
         ) : odoRecordsDisplay.map(r=>(
           editOdoId===r.id ? (
             <div className="edit-row-odo" key={r.id}>
-              <div><label>Tanggal</label><input type="date" value={editOdoDate} onChange={e=>setEditOdoDate(e.target.value)} /></div>
-              <div><label>Jam Berangkat</label><input type="time" value={editJamPergi} onChange={e=>setEditJamPergi(e.target.value)} /></div>
-              <div><label>Odo Berangkat</label><input type="number" min="0" value={editOdoBefore} onChange={e=>setEditOdoBefore(e.target.value)} placeholder="km" /></div>
+              <div><label>📅 Tanggal</label><input type="date" value={editOdoDate} onChange={e=>setEditOdoDate(e.target.value)} /></div>
+              <div><label>⏰ Jam Berangkat</label><input type="time" value={editJamPergi} onChange={e=>setEditJamPergi(e.target.value)} /></div>
+              <div><label>🛣️ Odo Berangkat</label><input type="number" min="0" value={editOdoBefore} onChange={e=>setEditOdoBefore(e.target.value)} placeholder="km" /></div>
               <div>
-                <label>Bensin Berangkat</label>
+                <label>⛽ Bensin Berangkat</label>
                 <select value={editBbmBefore} onChange={e=>setEditBbmBefore(e.target.value)}>
                   <option value="">-</option>
                   {BBM_LEVELS.map(lv=><option key={lv} value={lv}>{lv}</option>)}
                 </select>
               </div>
-              <div><label>Jam Pulang</label><input type="time" value={editJamPulang} onChange={e=>setEditJamPulang(e.target.value)} /></div>
-              <div><label>Odo Pulang</label><input type="number" min="0" value={editOdoAfter} onChange={e=>setEditOdoAfter(e.target.value)} placeholder="km" /></div>
+              <div><label>⏰ Jam Pulang</label><input type="time" value={editJamPulang} onChange={e=>setEditJamPulang(e.target.value)} /></div>
+              <div><label>🛣️ Odo Pulang</label><input type="number" min="0" value={editOdoAfter} onChange={e=>setEditOdoAfter(e.target.value)} placeholder="km" /></div>
               <div>
-                <label>Bensin Pulang</label>
+                <label>⛽ Bensin Pulang</label>
                 <select value={editBbmAfter} onChange={e=>setEditBbmAfter(e.target.value)}>
                   <option value="">-</option>
                   {BBM_LEVELS.map(lv=><option key={lv} value={lv}>{lv}</option>)}
@@ -2818,12 +2959,12 @@ function MainApp({onDisconnect, binId}){
       {pdfNote && <div className="extract-note">{pdfNote}</div>}
       <div className="logform">
         <div>
-          <label>Tanggal</label>
+          <label>📅 Tanggal</label>
           <input ref={saleDateRef} type="date" value={saleDate} onChange={e=>setSaleDate(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); saleCustomerRef.current && saleCustomerRef.current.focus(); } }} />
         </div>
         <div>
-          <label>Customer</label>
+          <label>👤 Customer</label>
           <input ref={saleCustomerRef} type="text" list="salesCustomerList" value={saleCustomer} onChange={e=>setSaleCustomer(e.target.value)} placeholder="Nama customer"
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); saleDocNoRef.current && saleDocNoRef.current.focus(); } }} />
           <datalist id="salesCustomerList">
@@ -2831,12 +2972,13 @@ function MainApp({onDisconnect, binId}){
           </datalist>
         </div>
         <div>
-          <label>No. Dokumen (PO/PQ)</label>
+          <label>📄 No. Dokumen (PO/PQ)</label>
           <input ref={saleDocNoRef} type="text" value={saleDocNo} onChange={e=>setSaleDocNo(e.target.value)} placeholder="mis. PQ06648 / PO260101109"
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); const tRef = saleType==="Quotation" ? saleQuotationTypeRef : salePOTypeRef; tRef.current && tRef.current.focus(); } }} />
+          {saleDocNoClash && <div className="dupe-warn">⚠ Sudah dipakai: {(saleDocNoClash.customer||"-")+" \u2022 "+(saleDocNoClash.date||"-")}</div>}
         </div>
         <div>
-          <label>Jenis</label>
+          <label>🏷️ Jenis</label>
           <div className="type-toggle">
             <div ref={salePOTypeRef} tabIndex={0} className={"type-btn"+(saleType==="PO"?" active-visit":"")} onClick={()=>setSaleType("PO")}
               onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setSaleType("PO"); saleNominalRef.current && saleNominalRef.current.focus(); } }}>PO</div>
@@ -2845,12 +2987,12 @@ function MainApp({onDisconnect, binId}){
           </div>
         </div>
         <div>
-          <label>Nominal (Rp)</label>
+          <label>💰 Nominal (Rp)</label>
           <input ref={saleNominalRef} type="text" inputMode="numeric" value={formatNominalDisplay(saleNominal)} onChange={e=>setSaleNominal(e.target.value.replace(/\D/g,""))} placeholder="mis. 17.196.186"
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); saleNoteRef.current && saleNoteRef.current.focus(); } }} />
         </div>
         <div className="full">
-          <label>Catatan (opsional)</label>
+          <label>📝 Catatan (opsional)</label>
           <input ref={saleNoteRef} type="text" value={saleNote} onChange={e=>setSaleNote(e.target.value)} placeholder="mis. cooling system parts"
             onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); saveSaleBtnRef.current && saveSaleBtnRef.current.focus(); } }} />
         </div>
@@ -2858,7 +3000,7 @@ function MainApp({onDisconnect, binId}){
 
       <div className="parts-section">
         <div className="parts-header">
-          <label>Rincian Part yang Terjual (opsional, buat laporan part & customer)</label>
+          <label>🔩 Rincian Part yang Terjual (opsional, buat laporan part & customer)</label>
           <button type="button" className="icon-btn" onClick={addSalePartRow}>+ Tambah Part</button>
         </div>
         {saleParts.map((p,idx)=>(
@@ -2876,7 +3018,7 @@ function MainApp({onDisconnect, binId}){
           Subtotal rincian part (qty &times; harga satuan, sebelum diskon &amp; PPN): {formatRupiah(saleParts.reduce((s,p)=>s+((Number(p.qty)||0)*(Number(p.unitPrice)||0)),0))}
         </div>
       )}
-      <button ref={saveSaleBtnRef} className="add-btn" onClick={addSaleEntry}>Simpan Penjualan</button>
+      <button ref={saveSaleBtnRef} className="add-btn" onClick={addSaleEntry}>💰 Simpan Penjualan</button>
 
       <div className="sales-target-row" style={{marginTop:16}}>
         <span>Total penjualan {quarter.label}: <strong style={{color:"var(--ink)"}}>{formatRupiah(salesTotalQ)}</strong></span>
@@ -2885,7 +3027,7 @@ function MainApp({onDisconnect, binId}){
       <div className="entries">
         <div className="search-box" style={{display:"flex", gap:8, alignItems:"flex-end"}}>
           <div style={{flex:1}}>
-            <label>Cari Penjualan (Customer / No. Dokumen / Catatan)</label>
+            <label>🔍 Cari Penjualan (Customer / No. Dokumen / Catatan)</label>
             <input type="text" value={salesSearch} onChange={e=>setSalesSearch(e.target.value)} placeholder="ketik untuk mencari..." />
           </div>
           {!salesSearchClean && sortedSalesFiltered.length>3 && (
@@ -2900,22 +3042,22 @@ function MainApp({onDisconnect, binId}){
           ) : sortedSalesDisplay.map(s=>(
             editSaleId===s.id ? (
               <div className="edit-row-odo" key={s.id}>
-                <div><label>Tanggal</label><input type="date" value={editSaleDate} onChange={e=>setEditSaleDate(e.target.value)} /></div>
-                <div><label>Customer</label><input type="text" value={editSaleCustomer} onChange={e=>setEditSaleCustomer(e.target.value)} /></div>
-                <div><label>No. Dokumen</label><input type="text" value={editSaleDocNo} onChange={e=>setEditSaleDocNo(e.target.value)} /></div>
+                <div><label>📅 Tanggal</label><input type="date" value={editSaleDate} onChange={e=>setEditSaleDate(e.target.value)} /></div>
+                <div><label>👤 Customer</label><input type="text" value={editSaleCustomer} onChange={e=>setEditSaleCustomer(e.target.value)} /></div>
+                <div><label>📄 No. Dokumen</label><input type="text" value={editSaleDocNo} onChange={e=>setEditSaleDocNo(e.target.value)} /></div>
                 <div>
-                  <label>Jenis</label>
+                  <label>🏷️ Jenis</label>
                   <select value={editSaleType} onChange={e=>setEditSaleType(e.target.value)}>
                     <option value="PO">PO</option>
                     <option value="Quotation">Quotation</option>
                   </select>
                 </div>
-                <div><label>Nominal (Rp)</label><input type="text" inputMode="numeric" value={formatNominalDisplay(editSaleNominal)} onChange={e=>setEditSaleNominal(e.target.value.replace(/\D/g,""))} /></div>
-                <div><label>Catatan</label><input type="text" value={editSaleNote} onChange={e=>setEditSaleNote(e.target.value)} /></div>
+                <div><label>💰 Nominal (Rp)</label><input type="text" inputMode="numeric" value={formatNominalDisplay(editSaleNominal)} onChange={e=>setEditSaleNominal(e.target.value.replace(/\D/g,""))} /></div>
+                <div><label>📝 Catatan</label><input type="text" value={editSaleNote} onChange={e=>setEditSaleNote(e.target.value)} /></div>
                 <div className="full">
                   <div className="parts-section" style={{marginBottom:8}}>
                     <div className="parts-header">
-                      <label>Rincian Part</label>
+                      <label>🔩 Rincian Part</label>
                       <button type="button" className="icon-btn" onClick={addEditSalePartRow}>+ Tambah Part</button>
                     </div>
                     {editSaleParts.map((p,idx)=>(
@@ -2971,7 +3113,7 @@ function MainApp({onDisconnect, binId}){
           <div className="logform">
             {!addingNew ? (
               <div className="full combo-wrap">
-                <label>Customer</label>
+                <label>👤 Customer</label>
                 <input
                   ref={custQueryRef}
                   type="text"
@@ -3011,24 +3153,24 @@ function MainApp({onDisconnect, binId}){
             ) : (
               <React.Fragment>
                 <div className="full">
-                  <label>Nama Perusahaan</label>
+                  <label>🏢 Nama Perusahaan</label>
                   <input ref={newNameRef} type="text" value={newName} onChange={e=>setNewName(e.target.value)} placeholder="mis. PT. Contoh Sejahtera Abadi"
                     onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); newPicRef.current && newPicRef.current.focus(); } }} />
                 </div>
                 <div>
-                  <label>Nama PIC</label>
+                  <label>👤 Nama PIC</label>
                   <input ref={newPicRef} type="text" value={newPic} onChange={e=>setNewPic(e.target.value)} placeholder="mis. Pak Andi"
                     onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); newPhoneRef.current && newPhoneRef.current.focus(); } }} />
                 </div>
                 <div>
-                  <label>No. HP PIC</label>
+                  <label>📱 No. HP PIC</label>
                   <input ref={newPhoneRef} type="tel" value={newPhone} onChange={e=>setNewPhone(e.target.value)} placeholder="mis. 08123456789"
                     onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); const tRef = type==="call" ? typeCallRef : typeVisitRef; tRef.current && tRef.current.focus(); } }} />
                 </div>
               </React.Fragment>
             )}
             <div>
-              <label>Jenis</label>
+              <label>🏷️ Jenis</label>
               <div className="type-toggle">
                 <div ref={typeVisitRef} tabIndex={0} className={"type-btn"+(type==="visit"?" active-visit":"")} onClick={()=>setType("visit")}
                   onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setType("visit"); dateLogRef.current && dateLogRef.current.focus(); } }}>Visit</div>
@@ -3037,12 +3179,12 @@ function MainApp({onDisconnect, binId}){
               </div>
             </div>
             <div>
-              <label>Tanggal</label>
+              <label>📅 Tanggal</label>
               <input ref={dateLogRef} type="date" value={date} onChange={e=>setDate(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); noteRef.current && noteRef.current.focus(); } }} />
             </div>
             <div className="full">
-              <label>Catatan (opsional)</label>
+              <label>📝 Catatan (opsional)</label>
               <input ref={noteRef} type="text" value={note} onChange={e=>setNote(e.target.value)} placeholder="mis. bahas PO spare part"
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); saveLogBtnRef.current && saveLogBtnRef.current.focus(); } }} />
             </div>
@@ -3055,7 +3197,7 @@ function MainApp({onDisconnect, binId}){
             <h2 className="section">Riwayat — {quarter.label}</h2>
             <div className="search-box" style={{display:"flex", gap:8, alignItems:"flex-end"}}>
               <div style={{flex:1}}>
-                <label>Cari Customer / Catatan</label>
+                <label>🔍 Cari Customer / Catatan</label>
                 <input type="text" value={entriesSearch} onChange={e=>setEntriesSearch(e.target.value)} placeholder="ketik nama customer atau catatan..." />
               </div>
               {!entriesSearchClean && sortedEntriesFiltered.length>10 && (
@@ -3095,10 +3237,10 @@ function MainApp({onDisconnect, binId}){
           {filteredManageList.map(c=>(
             editId===c.id ? (
               <div className="edit-row" key={c.id} style={{gridTemplateColumns:"1fr 1fr 1fr auto",gap:10}}>
-                <div><label>Nama</label><div style={{fontSize:13,padding:"9px 0"}}>{c.name}</div></div>
-                <div><label>PIC</label><input type="text" value={editPic} onChange={e=>setEditPic(e.target.value)} /></div>
-                <div><label>No. HP</label><input type="tel" value={editPhone} onChange={e=>setEditPhone(e.target.value)} /></div>
-                <div className="full"><label>Alamat (buat auto-isi Penawaran)</label><input type="text" value={editAddress} onChange={e=>setEditAddress(e.target.value)} placeholder="mis. Jl. Raya Anyar KM 121, Cilegon" /></div>
+                <div><label>👤 Nama</label><div style={{fontSize:13,padding:"9px 0"}}>{c.name}</div></div>
+                <div><label>👤 PIC</label><input type="text" value={editPic} onChange={e=>setEditPic(e.target.value)} /></div>
+                <div><label>📱 No. HP</label><input type="tel" value={editPhone} onChange={e=>setEditPhone(e.target.value)} /></div>
+                <div className="full"><label>🏢 Alamat (buat auto-isi Penawaran)</label><input type="text" value={editAddress} onChange={e=>setEditAddress(e.target.value)} placeholder="mis. Jl. Raya Anyar KM 121, Cilegon" /></div>
                 <div style={{display:"flex",gap:6}}>
                   <button className="icon-btn" onClick={()=>saveEdit(c.id)}>Simpan</button>
                   <button className="icon-btn" onClick={cancelEdit}>Batal</button>
@@ -3293,50 +3435,51 @@ function MainApp({onDisconnect, binId}){
 
           <div className="logform">
             <div>
-              <label>Branch</label>
+              <label>🏪 Branch</label>
               <input type="text" ref={quoBranchRef} value={quoBranch} onChange={e=>setQuoBranch(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoDocNoRef.current && quoDocNoRef.current.focus(); } }} />
             </div>
             <div>
-              <label>No. Dokumen</label>
+              <label>📄 No. Dokumen</label>
               <input type="text" ref={quoDocNoRef} value={quoDocNo} onChange={e=>setQuoDocNo(e.target.value)} placeholder={quoFormat==="ais"?"mis. 2602PQ06664":"mis. PQ06664"}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoDocDateRef.current && quoDocDateRef.current.focus(); } }} />
+              {quoDocNoClash && <div className="dupe-warn">⚠ Sudah dipakai: {(quoDocNoClash.customerName||"-")+" \u2022 "+(quoDocNoClash.docDate||"-")}</div>}
             </div>
             <div>
-              <label>Tanggal Dokumen</label>
+              <label>📅 Tanggal Dokumen</label>
               <input type="date" ref={quoDocDateRef} value={quoDocDate} onChange={e=>setQuoDocDate(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoCustomerNameRef.current && quoCustomerNameRef.current.focus(); } }} />
             </div>
             <div className="full">
-              <label>Pilih Customer Terdaftar (opsional, auto-isi alamat/telp/PIC)</label>
+              <label>📇 Pilih Customer Terdaftar (opsional, auto-isi alamat/telp/PIC)</label>
               <select value={quoCustomerId} onChange={e=>applyQuoCustomer(e.target.value)}>
                 <option value="">-- pilih customer --</option>
                 {activeCustomers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div className="full">
-              <label>Nama Customer</label>
+              <label>👤 Nama Customer</label>
               <input type="text" ref={quoCustomerNameRef} value={quoCustomerName} onChange={e=>setQuoCustomerName(e.target.value)} placeholder="mis. B00025-PT. Berkah Manis Makmur"
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoAddressRef.current && quoAddressRef.current.focus(); } }} />
             </div>
             <div className="full">
-              <label>Alamat</label>
+              <label>🏢 Alamat</label>
               <input type="text" ref={quoAddressRef} value={quoAddress} onChange={e=>setQuoAddress(e.target.value)} placeholder="Otomatis terisi kalau customer punya alamat tersimpan (dari upload PDF sebelumnya)"
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoPhoneRef.current && quoPhoneRef.current.focus(); } }} />
             </div>
             <div>
-              <label>No. Telp</label>
+              <label>☎️ No. Telp</label>
               <input type="text" ref={quoPhoneRef} value={quoPhone} onChange={e=>setQuoPhone(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoAttnRef.current && quoAttnRef.current.focus(); } }} />
             </div>
             <div>
-              <label>Remarks / Attn</label>
+              <label>📌 Remarks / Attn</label>
               <input type="text" ref={quoAttnRef} value={quoAttn} onChange={e=>setQuoAttn(e.target.value)} placeholder="mis. ATTN BPK. PANJI"
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); (quoFormat==="manual" ? quoMerkRef : quoModelRef).current?.focus(); } }} />
             </div>
             {quoFormat==="manual" && (
               <div>
-                <label>Merk</label>
+                <label>🏷️ Merk</label>
                 <input type="text" list="merkDatalist" ref={quoMerkRef} value={quoMerk} onChange={e=>setQuoMerk(e.target.value)} placeholder="mis. NICHIYU, LONKING, BYD, NOBLELIFT"
                   onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoModelRef.current && quoModelRef.current.focus(); } }} />
                 <datalist id="merkDatalist">
@@ -3345,18 +3488,18 @@ function MainApp({onDisconnect, binId}){
               </div>
             )}
             <div>
-              <label>Model</label>
+              <label>🚜 Model</label>
               <input type="text" ref={quoModelRef} value={quoModel} onChange={e=>setQuoModel(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoSNRef.current && quoSNRef.current.focus(); } }} />
             </div>
             <div>
-              <label>Serial Number</label>
+              <label>🔢 Serial Number</label>
               <input type="text" ref={quoSNRef} value={quoSN} onChange={e=>setQuoSN(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); (quoFormat==="ais" ? quoCustPoNoRef : null)?.current?.focus() || document.querySelector(".parts-section .part-row input, .parts-section .part-row select")?.focus(); } }} />
             </div>
             {quoFormat==="ais" && (
               <div>
-                <label>Customer PO No.</label>
+                <label>📄 Customer PO No.</label>
                 <input type="text" ref={quoCustPoNoRef} value={quoCustPoNo} onChange={e=>setQuoCustPoNo(e.target.value)}
                   onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); document.querySelector(".parts-section .part-row input, .parts-section .part-row select")?.focus(); } }} />
               </div>
@@ -3371,7 +3514,7 @@ function MainApp({onDisconnect, binId}){
             <React.Fragment>
               <div className="parts-section">
                 <div className="parts-header">
-                  <label>Rincian Part</label>
+                  <label>🔩 Rincian Part</label>
                   <button type="button" className="icon-btn" onClick={addQuoAisRow}>+ Tambah Baris</button>
                 </div>
                 {quoAisRows.map((r,idx)=>{
@@ -3487,7 +3630,7 @@ function MainApp({onDisconnect, binId}){
           <div className="no-print">
             <h2 className="section" style={{marginBottom:10}}>Riwayat Penawaran — {quarter.label}</h2>
             <div style={{marginBottom:12}}>
-              <label>Cari No. Dokumen / Customer</label>
+              <label>🔍 Cari No. Dokumen / Customer</label>
               <input type="text" value={quoSearch} onChange={e=>setQuoSearch(e.target.value)} placeholder="mis. PQ06682 atau Bangun Mitra" />
             </div>
             {quotationsSorted.length===0 ? (
@@ -3636,6 +3779,7 @@ function MainApp({onDisconnect, binId}){
           <h2 className="section" style={{marginTop:0}}>Pengaturan Tracker VCS {helpBtn("umum")}</h2>
           <div className="extract-note" style={{marginTop:0}}>Semua pengaturan di sini juga bisa diubah langsung dari menu terkait (mis. Buat Penawaran). Klik tanda tanya (?) untuk petunjuk pengisian.</div>
           {renderQuoSettings()}
+          {renderAutoBackupPanel()}
           {renderSignerCard()}
           {renderBgSettings()}
         </React.Fragment>
