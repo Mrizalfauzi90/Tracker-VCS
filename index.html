@@ -680,18 +680,30 @@ function MainApp({onDisconnect, binId}){
   const [importDone,setImportDone] = useState(false);
   const [importErr,setImportErr] = useState("");
 
-  useEffect(()=>{
+  const LEGACY_DISMISS_KEY = "tracker_legacy_dismissed_v1";
+  const scanLegacyKeys = ()=>{
     try{
+      if(localStorage.getItem(LEGACY_DISMISS_KEY)==="1"){ setLegacyKeys([]); return; }
       const found = [];
       for(let i=0;i<localStorage.length;i++){
         const k = localStorage.key(i);
-        if(k && k.indexOf("tracker_")===0 && CLOUD_CONFIG_KEYS.indexOf(k)===-1){
+        if(k && k.indexOf("tracker_")===0 && CLOUD_CONFIG_KEYS.indexOf(k)===-1 && k!==LEGACY_DISMISS_KEY){
           found.push(k);
         }
       }
       setLegacyKeys(found);
     }catch(e){}
-  },[]);
+  };
+  useEffect(()=>{ scanLegacyKeys(); },[]);
+  const dismissLegacyImport = ()=>{
+    try{ localStorage.setItem(LEGACY_DISMISS_KEY,"1"); }catch(e){}
+    setLegacyKeys([]);
+  };
+  const recheckLegacyImport = ()=>{
+    try{ localStorage.removeItem(LEGACY_DISMISS_KEY); }catch(e){}
+    setImportErr(""); setImportDone(false);
+    scanLegacyKeys();
+  };
 
   const importLegacyData = async()=>{
     setImportBusy(true); setImportErr(""); setImportDone(false);
@@ -717,6 +729,8 @@ function MainApp({onDisconnect, binId}){
         }
       }
       await window.__jsonbinWriteAll(cloudData);
+      for(const lk of legacyKeys){ try{ localStorage.removeItem(lk); }catch(e){} }
+      try{ localStorage.setItem(LEGACY_DISMISS_KEY,"1"); }catch(e){}
       setImportDone(true);
       setTimeout(()=>{ window.location.reload(); }, 1200);
     }catch(e){
@@ -2070,6 +2084,12 @@ function MainApp({onDisconnect, binId}){
     persistTheme({...theme, bgs:nb});
   };
   const bgNow = theme.bgs[mainView] || null;
+  // Ambil kata pertama yang bukan inisial (mis. "M. Rizal Fauzi" -> "Rizal", bukan "M.")
+  const greetingName = useMemo(()=>{
+    const parts = (profile.name||"").trim().split(/\s+/).filter(Boolean);
+    const real = parts.find(w=> w.replace(/\.$/,"").length>1 );
+    return real || parts[0] || "";
+  },[profile.name]);
   const greeting = useMemo(()=>{
     const h = new Date().getHours();
     if(h>=4 && h<11) return {text:"Selamat Pagi", icon:"\u{1F305}"};
@@ -2687,7 +2707,7 @@ function MainApp({onDisconnect, binId}){
         </div>
         <div className="date">{today.toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
       </div>
-      <div className="greeting-bar no-print">{greeting.icon} {greeting.text}{profile.name ? ", "+profile.name.split(" ")[0]+"!" : "!"}</div>
+      <div className="greeting-bar no-print">{greeting.icon} {greeting.text}{greetingName ? ", "+greetingName+"!" : "!"}</div>
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:4}}>
         <div className="cloud-badge" onClick={()=>{ if(window.confirm("Putuskan koneksi cloud di perangkat ini? Data di cloud tetap aman, cuma perlu disambungkan ulang lain kali.")) onDisconnect(); }} title="Klik untuk memutus/mengganti koneksi cloud di perangkat ini">
@@ -2751,9 +2771,13 @@ function MainApp({onDisconnect, binId}){
             <button className="icon-btn" onClick={importLegacyData} disabled={importBusy}>
               {importBusy ? "Memindahkan..." : "Import ke Cloud"}
             </button>
-            <button className="icon-btn" onClick={()=>setLegacyKeys([])} disabled={importBusy}>Nanti Saja</button>
+            <button className="icon-btn" onClick={dismissLegacyImport} disabled={importBusy}>Nanti Saja (jangan tanya lagi)</button>
           </div>
-          {importErr && <div style={{color:"var(--red)",fontSize:11.5,fontWeight:600,marginTop:8}}>{importErr}</div>}
+          {importErr && (
+            <div style={{color:"var(--red)",fontSize:11.5,fontWeight:600,marginTop:8}}>
+              {importErr}<br/>Data lama tetap aman tersimpan di browser ini. Kalau terus gagal, klik "Nanti Saja" dulu — nanti bisa dicoba lagi lewat menu Pengaturan.
+            </div>
+          )}
         </div>
       )}
       {importDone && (
@@ -3782,6 +3806,11 @@ function MainApp({onDisconnect, binId}){
           {renderAutoBackupPanel()}
           {renderSignerCard()}
           {renderBgSettings()}
+          <div className="signer-card no-print">
+            <h2 className="section" style={{marginTop:0}}>Impor Data Lama</h2>
+            <div className="extract-note" style={{marginTop:0}}>Kalau dulu pernah menutup notifikasi impor data lama, atau proses impornya gagal, klik ini untuk cek ulang.</div>
+            <button type="button" className="icon-btn" onClick={recheckLegacyImport}>Cek Data Lokal Lama</button>
+          </div>
         </React.Fragment>
       )}
 
