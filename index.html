@@ -295,6 +295,12 @@
     #quotationPrintArea{position:absolute;left:0;top:0;width:100%;border:none;max-width:none;padding:0;}
     .no-print{display:none !important;}
 
+    /* Semua elemen di luar area cetak dikeluarkan dari alur halaman (bukan sekadar disembunyikan). Tanpa ini, isi aplikasi
+       yang tidak terlihat tetap memakai ruang dan membuat halaman kosong tambahan yang hanya berisi watermark. */
+    html, body{margin:0 !important; padding:0 !important; height:auto !important; min-height:0 !important;}
+    body *:not(#quotationPrintArea):not(#quotationPrintArea *):not(:has(#quotationPrintArea)){display:none !important;}
+    body *:has(#quotationPrintArea){margin:0 !important; padding:0 !important; border:0 !important; height:auto !important; min-height:0 !important; max-height:none !important; overflow:visible !important; box-shadow:none !important; background:none !important;}
+
     /* Header tabel diulang otomatis tiap ganti halaman kalau tabelnya panjang */
     .quo-ais-table thead, .quo-manual-table thead{display:table-header-group;}
     .quo-ais-table tr, .quo-manual-table tr{page-break-inside:avoid;}
@@ -2899,11 +2905,11 @@ function MainApp({onDisconnect, binId}){
         {calc.rows.map((r,idx)=>(
           <tr key={idx}>
             <td>{idx+1}</td>
-            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}</td>
+            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
             <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
             <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
             <td style={{textAlign:"right"}}>{r.ext?r.ext.toLocaleString("id-ID"):""}</td>
-            <td>{r.remark}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
+            <td>{r.remark}</td>
           </tr>
         ))}
         <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl">TOTAL VALUE</td><td className="quo-manual-total-val">{calc.totalValue.toLocaleString("id-ID")}</td><td></td></tr>
@@ -4546,7 +4552,7 @@ function MainApp({onDisconnect, binId}){
           </div>
           <div className="faq-item">
             <h3>Gimana menandai stock part (Jakarta, Cikarang, Indent, dst)?</h3>
-            <p>Klik <strong>+ Stock / Indent</strong> di baris part, lalu pilih lokasi: cabang/depo Berca (Cilegon, Jakarta, Cikarang, dan cabang lain), <strong>Indent</strong> (isi asal: China, Singapura, Jepang, atau ketik sendiri), atau <strong>Lainnya</strong> (teks bebas). Kalau barangnya tersebar, klik <strong>+ Lokasi lain</strong> dan isi <strong>Jml</strong> per lokasi (mis. diminta 5: 3 di Cilegon, 2 di Cikarang). Kolom <strong>Est. hari</strong> boleh diisi untuk estimasi tiba. Jumlah yang terisi dibandingkan dengan Qty yang diminta, dan diberi peringatan kalau melebihi. Di penawaran AIS tampil sebagai baris kecil tebal di bawah part; di penawaran Manual di kolom Remark. Kalau ada minimal satu baris berisi stock, otomatis muncul catatan bahwa ketersediaan stock dapat berubah. Stock sengaja tidak disimpan di Katalog Part karena cepat berubah, jadi isi per penawaran. <strong>Samakan lokasi ke semua baris</strong> menyalin daftar lokasi baris itu ke semua part (jumlahnya tidak ikut disalin).</p>
+            <p>Klik <strong>+ Stock / Indent</strong> di baris part, lalu pilih lokasi: cabang/depo Berca (Cilegon, Jakarta, Cikarang, dan cabang lain), <strong>Indent</strong> (isi asal: China, Singapura, Jepang, atau ketik sendiri), atau <strong>Lainnya</strong> (teks bebas). Kalau barangnya tersebar, klik <strong>+ Lokasi lain</strong> dan isi <strong>Jml</strong> per lokasi (mis. diminta 5: 3 di Cilegon, 2 di Cikarang). Kolom <strong>Est. hari</strong> boleh diisi untuk estimasi tiba. Jumlah yang terisi dibandingkan dengan Qty yang diminta, dan diberi peringatan kalau melebihi. Di penawaran AIS tampil sebagai baris kecil tebal di bawah part; di penawaran Manual juga di bawah nama part (kolom Remark tidak dipakai supaya baris tidak membengkak). Kalau ada minimal satu baris berisi stock, otomatis muncul catatan bahwa ketersediaan stock dapat berubah. Stock sengaja tidak disimpan di Katalog Part karena cepat berubah, jadi isi per penawaran. <strong>Samakan lokasi ke semua baris</strong> menyalin daftar lokasi baris itu ke semua part (jumlahnya tidak ikut disalin).</p>
           </div>
           <div className="faq-item">
             <h3>Supersede di penawaran itu apa?</h3>
