@@ -378,20 +378,47 @@ function jsonbinReadAll(){
     headers: { "X-Master-Key": cfg.apiKey, "X-Bin-Meta": "false" },
     cache: "no-store"
   }).then(function(r){
-    if(!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  }).then(function(data){ return data || {}; });
+    if(!r.ok) return __jsonbinFail(r);
+    return r.text();
+  }).then(function(t){
+    __reportCloudSize(t);
+    var data = JSON.parse(t);
+    return data || {};
+  });
 }
 function jsonbinWriteAll(dataObj){
   var cfg = getCloudCfg();
   if(!cfg.apiKey || !cfg.binId) return Promise.reject(new Error("Cloud belum terhubung"));
+  var body = JSON.stringify(dataObj);
   return fetch("https://api.jsonbin.io/v3/b/" + cfg.binId, {
     method: "PUT",
     headers: { "Content-Type": "application/json", "X-Master-Key": cfg.apiKey },
-    body: JSON.stringify(dataObj)
+    body: body
   }).then(function(r){
-    if(!r.ok) throw new Error("HTTP " + r.status);
+    if(!r.ok) return __jsonbinFail(r, body);
+    __reportCloudSize(body);
     return r.json();
+  });
+}
+// Ukuran data Cloud (KB) dilaporkan ke tampilan. JSONBin paket gratis menolak (HTTP 403) bin di atas 100 KB.
+function __reportCloudSize(text){
+  try{
+    var n = (typeof Blob !== "undefined") ? new Blob([text]).size : String(text).length;
+    window.__cloudBytes = n;
+    window.dispatchEvent(new CustomEvent("cloudsize", {detail:{bytes:n}}));
+  }catch(e){}
+}
+// Error dari JSONBin dibuat lebih jelas (alasan asli dari server + dugaan penyebab)
+function __jsonbinFail(r, sentBody){
+  return r.text().then(function(t){
+    var msg = "";
+    try{ msg = (JSON.parse(t).message || "").toString(); }catch(e){}
+    var hint = "";
+    if(r.status===403){
+      var kb = sentBody ? Math.round(new Blob([sentBody]).size/1024) : (window.__cloudBytes ? Math.round(window.__cloudBytes/1024) : 0);
+      hint = " (kemungkinan data Cloud melebihi batas ukuran paket JSONBin"+(kb?", sekarang sekitar "+kb+" KB; paket gratis maksimal 100 KB":"")+", atau kuota request habis)";
+    }
+    throw new Error("HTTP " + r.status + (msg ? " - " + msg : "") + hint);
   });
 }
 window.__jsonbinReadAll = jsonbinReadAll;
@@ -484,7 +511,8 @@ const DEFAULT_SALES_TARGET = 2000000000;
 // Tanggal lokal "YYYY-MM-DD". toISOString() memakai UTC, jadi di WIB (UTC+7) jam 00:00-07:00 hasilnya masih kemarin.
 function localISO(d){ const x = d || new Date(); return new Date(x.getTime() - x.getTimezoneOffset()*60000).toISOString().slice(0,10); }
 const UC = s => String(s==null?"":s).toUpperCase();
-const FOLLOWUP_DAYS = 14;
+const FOLLOWUP_WORKDAYS = 7;   // pengingat follow up: 7 hari kerja (Senin-Jumat, di luar hari libur)
+const AUTO_LOST_MONTHS = 3;    // penawaran Open tanpa kabar lewat 3 bulan otomatis dianggap Lost (tetap bisa dicari / dibuka lagi)
 // Daftar cabang/depo/outlet Berca (dari peta Office Network). Bisa ditambah di sini kalau ada cabang baru.
 const BERCA_BRANCHES_TOP = ["Cilegon","Jakarta","Cikarang"];
 const BERCA_BRANCHES = ["Asem Reges","Balikpapan","Bandung","Banjarmasin","Batam","Batu Kajang","Benete","Bengalon","Bengkulu","Berau","Bitung","Cilacap","Denpasar","Jambi","Jatake","Kariangau","Kendari","Ketapang","Kupang","Lampung","Makassar","Manado","Medan","Melak","Morowali","Muara Enim","Padang","Palangkaraya","Palembang","Palu","Pangkal Pinang","Pekanbaru","Pontianak","Samarinda","Sampit","Sangatta","Satui","Semarang","Sorong","Surabaya","Tanjung Pinang","Tanjung Tabalong","Tarakan","Tembagapura","Waingapu"];
@@ -882,40 +910,75 @@ function MainApp({onDisconnect, binId}){
   const [autoBackupBusy,setAutoBackupBusy] = useState(false);
   const [autoBackupErr,setAutoBackupErr] = useState("");
   const [autoBackupMsg,setAutoBackupMsg] = useState("");
+  // Cadangan harian disimpan di perangkat ini (localStorage), BUKAN di dalam Cloud. Bentuk lama menyalin seluruh isi Cloud
+  // (termasuk cadangan kemarin) ke dalam Cloud itu sendiri, sehingga ukurannya berlipat tiap hari dan melewati batas JSONBin.
+  const AUTOBAK_PREFIX = "tracker_autobak_";
   const refreshAutoBackupList = async()=>{
     try{
-      const r = await window.storage.list("auto_backup_snap_");
-      const dates = (r && r.keys ? r.keys : []).map(k=>k.replace("auto_backup_snap_","")).sort().reverse();
+      const dates = [];
+      for(let i=0;i<localStorage.length;i++){
+        const k = localStorage.key(i);
+        if(k && k.indexOf(AUTOBAK_PREFIX)===0 && k!==AUTOBAK_PREFIX+"last") dates.push(k.slice(AUTOBAK_PREFIX.length));
+      }
+      dates.sort().reverse();
       setAutoBackupList(dates);
       return dates;
     }catch(e){ return []; }
   };
+  const [legacySnaps,setLegacySnaps] = useState([]);
+  const [cleanBusy,setCleanBusy] = useState(false);
+  const [cleanMsg,setCleanMsg] = useState("");
+  const [cleanErr,setCleanErr] = useState("");
+  const [cloudBytes,setCloudBytes] = useState(0);
+  useEffect(()=>{
+    const h = (e)=> setCloudBytes((e.detail && e.detail.bytes) || 0);
+    window.addEventListener("cloudsize", h);
+    return ()=> window.removeEventListener("cloudsize", h);
+  },[]);
   useEffect(()=>{
     (async()=>{
+      refreshAutoBackupList();
+      try{ const r = await window.storage.list("auto_backup_"); setLegacySnaps((r && r.keys) ? r.keys : []); }catch(e){}
       const todayStr = localISO();
-      let lastDate = "";
-      try{ const r = await window.storage.get("auto_backup_last_date"); lastDate = r && r.value ? r.value : ""; }catch(e){}
-      if(lastDate===todayStr){ refreshAutoBackupList(); return; }
       try{
+        if(localStorage.getItem(AUTOBAK_PREFIX+"last")===todayStr) return;
         const cloudData = await window.__jsonbinReadAll();
-        const clean = {...cloudData}; delete clean._tracker_db; delete clean._created;
-        await window.storage.set("auto_backup_snap_"+todayStr, JSON.stringify(clean));
-        await window.storage.set("auto_backup_last_date", todayStr);
+        const clean = {...cloudData};
+        Object.keys(clean).forEach(k=>{ if(k.indexOf("auto_backup_")===0 || k==="_tracker_db" || k==="_created") delete clean[k]; });
+        localStorage.setItem(AUTOBAK_PREFIX+todayStr, JSON.stringify(clean));
+        localStorage.setItem(AUTOBAK_PREFIX+"last", todayStr);
         const dates = await refreshAutoBackupList();
-        // Buang cadangan lebih dari 7 hari supaya rapi
-        const toDrop = dates.slice(7);
-        for(const d of toDrop){ try{ await window.storage.delete("auto_backup_snap_"+d); }catch(e){} }
-        if(toDrop.length) refreshAutoBackupList();
-      }catch(e){ /* diam-diam gagal; tidak mengganggu pemakaian normal */ }
+        dates.slice(3).forEach(d=>{ try{ localStorage.removeItem(AUTOBAK_PREFIX+d); }catch(e){} });
+        refreshAutoBackupList();
+      }catch(e){ /* mis. penyimpanan perangkat penuh; tidak mengganggu pemakaian normal */ }
     })();
   },[]);
+  // Bersihkan cadangan bentuk lama di Cloud: data asli diunduh dulu sebagai file, lalu ditulis ulang sekali tanpa cadangan lama.
+  const cleanupLegacySnaps = async()=>{
+    setCleanBusy(true); setCleanMsg(""); setCleanErr("");
+    try{
+      const all = await window.__jsonbinReadAll();
+      const clean = {...all};
+      Object.keys(clean).forEach(k=>{ if(k.indexOf("auto_backup_")===0) delete clean[k]; });
+      const blob = new Blob([JSON.stringify(clean)], {type:"application/json"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "TrackerVCS_Backup_sebelum_bersih_"+localISO()+".json";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+      await window.__jsonbinWriteAll(clean);
+      setLegacySnaps([]);
+      setCleanMsg("Selesai. Cadangan lama dibersihkan dan file backup data asli sudah diunduh. Menyimpan catatan sekarang seharusnya normal lagi.");
+    }catch(e){
+      setCleanErr("Gagal membersihkan. Detail: " + (e && e.message ? e.message : String(e)));
+    }finally{ setCleanBusy(false); }
+  };
   const restoreAutoBackup = async(dateStr)=>{
     if(!window.confirm("PENTING: memulihkan cadangan tanggal "+dateStr+" akan MENIMPA SELURUH data Cloud saat ini (Visit, Penjualan, Odometer, Penawaran, Customer) dengan isi cadangan tanggal itu.\n\nData yang ditambahkan/diubah setelah tanggal "+dateStr+" akan HILANG.\n\nYakin mau lanjut?")) return;
     if(!window.confirm("Konfirmasi sekali lagi: pulihkan cadangan "+dateStr+" dan timpa data Cloud sekarang?")) return;
     setAutoBackupBusy(true); setAutoBackupErr(""); setAutoBackupMsg("");
     try{
-      const r = await window.storage.get("auto_backup_snap_"+dateStr);
-      const snap = JSON.parse(r.value);
+      const snap = JSON.parse(localStorage.getItem(AUTOBAK_PREFIX+dateStr));
+      const cur = await window.__jsonbinReadAll();
+      ["_tracker_db","_created"].forEach(k=>{ if(cur[k]!==undefined) snap[k] = cur[k]; });
       await window.__jsonbinWriteAll(snap);
       setAutoBackupMsg("Cadangan "+dateStr+" berhasil dipulihkan. Halaman akan dimuat ulang...");
       setTimeout(()=>{ window.location.reload(); }, 1500);
@@ -926,8 +989,9 @@ function MainApp({onDisconnect, binId}){
   };
   const downloadAutoBackup = async(dateStr)=>{
     try{
-      const r = await window.storage.get("auto_backup_snap_"+dateStr);
-      const blob = new Blob([r.value], {type:"application/json"});
+      const raw = localStorage.getItem(AUTOBAK_PREFIX+dateStr);
+      if(!raw) throw new Error("Cadangan tanggal itu tidak ditemukan di perangkat ini");
+      const blob = new Blob([raw], {type:"application/json"});
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "TrackerVCS_AutoBackup_"+dateStr+".json";
       document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
@@ -959,7 +1023,8 @@ function MainApp({onDisconnect, binId}){
         }catch(e){
           info = String(cloudData[k]).slice(0,40);
         }
-        return {key:k, info};
+        const sz = (typeof cloudData[k]==="string" ? cloudData[k] : JSON.stringify(cloudData[k])).length;
+        return {key:k, info: info+" · "+(sz/1024).toFixed(1)+" KB"};
       });
       setDebugResult({ totalKeys: rows.length, rows, checkedAt: new Date().toLocaleTimeString('id-ID') });
     }catch(e){
@@ -1113,6 +1178,7 @@ function MainApp({onDisconnect, binId}){
   const [quoEditingId,setQuoEditingId] = useState(null);
   const [quoSearch,setQuoSearch] = useState("");
   const [quoStatusFilter,setQuoStatusFilter] = useState("all"); // all | open | fu | deal | lost | arsip
+  const [fuDraftId,setFuDraftId] = useState(null);
   const [bulkCutoff,setBulkCutoff] = useState(()=> localISO(new Date(Date.now()-30*86400000)));
   const [quoPdfBusy,setQuoPdfBusy] = useState(false);
   const [quoPdfNote,setQuoPdfNote] = useState("");
@@ -2427,7 +2493,7 @@ function MainApp({onDisconnect, binId}){
     return null;
   };
   const buildQuotationObj = ()=>{ const prevQ = findQuotationById(quoEditingId) || {}; return ({
-    status: prevQ.status, statusAt: prevQ.statusAt, followUpAt: prevQ.followUpAt, followUpCount: prevQ.followUpCount, lostReason: prevQ.lostReason, dealtSaleId: prevQ.dealtSaleId, dealtDate: prevQ.dealtDate, trackerNo: prevQ.trackerNo,
+    status: prevQ.status, statusAt: prevQ.statusAt, followUpAt: prevQ.followUpAt, followUpCount: prevQ.followUpCount, lostReason: prevQ.lostReason, dealtSaleId: prevQ.dealtSaleId, dealtDate: prevQ.dealtDate, trackerNo: prevQ.trackerNo, reopenedAt: prevQ.reopenedAt,
     id: quoEditingId || Date.now(),
     format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
     customerName: UC(quoCustomerName.trim()), address: quoAddress.trim(), phone: quoPhone.trim(),
@@ -2515,9 +2581,27 @@ function MainApp({onDisconnect, binId}){
     const a = new Date(dateStr+"T00:00:00"); const b = new Date(); b.setHours(0,0,0,0);
     return Math.floor((b-a)/86400000);
   };
-  const quoStatus = (q)=> q.status || (q.dealtSaleId ? "deal" : "open");
+  const holidaysForRange = (a,b)=> [...new Set([...getHolidaysForYear(a.getFullYear()), ...getHolidaysForYear(b.getFullYear())])];
+  // Jumlah hari kerja yang sudah lewat sejak tanggal tsb (tanggal itu sendiri tidak dihitung)
+  const workdaysSince = (dateStr)=>{
+    if(!dateStr) return 0;
+    const start = new Date(dateStr+"T00:00:00"); start.setDate(start.getDate()+1);
+    const end = new Date();
+    return countWorkdaysBetween(start, end, holidaysForRange(start, end));
+  };
+  const quoRawStatus = (q)=> q.status || (q.dealtSaleId ? "deal" : "open");
+  // Lost otomatis: tidak disimpan, dihitung dari tanggal penawaran (atau tanggal "Buka lagi" terakhir)
+  const quoAutoLost = (q)=>{
+    if(quoRawStatus(q)!=="open") return false;
+    const base = q.reopenedAt || q.docDate;
+    if(!base) return false;
+    const lim = new Date(base+"T00:00:00"); lim.setMonth(lim.getMonth()+AUTO_LOST_MONTHS);
+    const t = new Date(); t.setHours(0,0,0,0);
+    return lim<=t;
+  };
+  const quoStatus = (q)=> quoAutoLost(q) ? "lost" : quoRawStatus(q);
   const quoFuBase = (q)=> q.followUpAt || q.docDate;
-  const quoNeedsFu = (q)=> quoStatus(q)==="open" && daysSince(quoFuBase(q))>=FOLLOWUP_DAYS;
+  const quoNeedsFu = (q)=> quoStatus(q)==="open" && workdaysSince(quoFuBase(q))>=FOLLOWUP_WORKDAYS;
 
   // Deal: langsung tercatat di Data Penjualan (tanpa konfirmasi). Salah klik bisa dibatalkan lewat "Batal Deal".
   const dealQuotationToSale = (q)=>{
@@ -2570,12 +2654,12 @@ function MainApp({onDisconnect, binId}){
     setInfo("Penawaran "+q.docNo+" ditandai LOST.");
   };
   const reopenQuotation = (q)=>{
-    persistQuotationToItsQuarter({...q, status:"open", statusAt: todayStr(), lostReason:"", followUpAt: todayStr()}, q.docDate);
-    setInfo("Penawaran "+q.docNo+" dibuka lagi (Open). Jadwal follow up berikutnya "+FOLLOWUP_DAYS+" hari dari hari ini.");
+    persistQuotationToItsQuarter({...q, status:"open", statusAt: todayStr(), lostReason:"", followUpAt: todayStr(), reopenedAt: todayStr()}, q.docDate);
+    setInfo("Penawaran "+q.docNo+" dibuka lagi (Open). Pengingat follow up "+FOLLOWUP_WORKDAYS+" hari kerja dari hari ini, dan hitungan Lost otomatis "+AUTO_LOST_MONTHS+" bulan mulai dari hari ini.");
   };
   const markFollowedUp = (q)=>{
     persistQuotationToItsQuarter({...q, followUpAt: todayStr(), followUpCount:(q.followUpCount||0)+1}, q.docDate);
-    setInfo("Follow up "+q.docNo+" dicatat. Pengingat berikutnya "+FOLLOWUP_DAYS+" hari lagi.");
+    setInfo("Follow up "+q.docNo+" dicatat. Pengingat berikutnya "+FOLLOWUP_WORKDAYS+" hari kerja lagi.");
   };
   // Data penjualan yang diturunkan dari sebuah penawaran (sama dengan yang dipakai saat Deal)
   const quoToSaleData = (q)=>{
@@ -2636,6 +2720,50 @@ function MainApp({onDisconnect, binId}){
     setInfo("No. "+oldNo+" diganti menjadi "+newNo+(updated.trackerNo?" (No. tracker "+updated.trackerNo+" tetap dicatat)":"")+(synced?", Data Penjualan terkait ikut disamakan.":"."));
   };
 
+  // Draft follow up ke customer (WA santai & email resmi) untuk penawaran yang belum ada kabar
+  const picFromAttn = (attn)=>{
+    const t = String(attn||"").replace(/^ATTN\.?\s*/i,"").trim();
+    if(!t) return "Bapak/Ibu";
+    const title = (w)=> w.toLowerCase().replace(/(^|\s)\S/g, c=>c.toUpperCase());
+    let m = t.match(/^(BP\.?|BAPAK|PAK)\s+(.+)$/i); if(m) return "Pak "+title(m[2]);
+    m = t.match(/^(IBU|IBK|BU)\.?\s+(.+)$/i); if(m) return "Bu "+title(m[2]);
+    return title(t);
+  };
+  const buildFuDraft = (q)=>{
+    const pic = picFromAttn(q.attn);
+    const picFormal = pic.replace(/^Pak /,"Bapak ").replace(/^Bu /,"Ibu ");
+    const cust = UC(String(q.customerName||"").replace(/^[A-Z]\d{3,6}\s*-\s*/i,""));
+    const rows = (q.format==="ais" ? (q.aisRows||[]) : (q.spareParts||[])).filter(r=>(r.desc||"").trim());
+    const pns = rows.map(r=>String(r.desc).split(",")[0].trim()).filter(Boolean);
+    const itemLine = pns.length ? pns.length+" item ("+pns.slice(0,3).join(", ")+(pns.length>3?", dst":"")+")" : "";
+    const dateStr = q.docDate ? new Date(q.docDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'}) : "-";
+    const total = formatRupiah(Number(q.totalAll)||0);
+    const expired = daysSince(q.docDate) >= 14;
+    const sg = signerName || "M. Rizal Fauzi";
+    const hh = new Date().getHours();
+    const sapa = hh<11 ? "pagi" : (hh<15 ? "siang" : (hh<18 ? "sore" : "malam"));
+    const wa = "Selamat "+sapa+", "+pic+"\n"
+      + cust+"\n\n"
+      + "Saya "+sg+" dari PT. Berca Mandiri Perkasa. Mau menindaklanjuti penawaran yang sudah kami kirim:\n"
+      + "- No. Penawaran: "+(q.docNo||"-")+"\n"
+      + "- Tanggal: "+dateStr+"\n"
+      + (itemLine ? "- Item: "+itemLine+"\n" : "")
+      + "- Total: "+total+"\n\n"
+      + "Bagaimana kabarnya? Apakah ada yang perlu kami sesuaikan (harga, stock, atau estimasi pengiriman)?\n"
+      + (expired ? "Kalau masa berlaku penawaran sudah lewat, kami bisa update harga dan stock terbaru.\n" : "")
+      + "Kalau sudah ada keputusan, kabari ya, kami siap bantu proses PO-nya.\n\n"
+      + "Terima kasih.\n"
+      + "Salam,\n"+sg+" - PT. Berca Mandiri Perkasa";
+    const emailSubject = "Follow Up Penawaran Harga No. "+(q.docNo||"-")+" - "+cust;
+    const emailBody = "Kepada Yth.\n"+picFormal+"\n"+cust+"\n\n"
+      + "Dengan hormat,\n\n"
+      + "Sehubungan dengan penawaran harga yang telah kami sampaikan pada tanggal "+dateStr+" (No. Dokumen: "+(q.docNo||"-")+", total "+total+"), kami ingin menanyakan perkembangannya. Apakah ada hal yang perlu kami sesuaikan, seperti harga, ketersediaan stock, atau estimasi pengiriman?\n\n"
+      + (expired ? "Mengingat masa berlaku penawaran 2 (dua) minggu telah terlewati, kami dapat memperbarui harga dan ketersediaan stock apabila diperlukan.\n\n" : "")
+      + "Apabila sudah ada keputusan, kami siap membantu proses selanjutnya. Terima kasih atas perhatian dan kerja samanya.\n\n"
+      + "Hormat kami,\n"+sg+"\nPT. Berca Mandiri Perkasa - Branch Cilegon";
+    return {wa, emailSubject, emailBody};
+  };
+
   // Rapikan massal: penawaran Open sebelum tanggal X. Kalau No. Dokumennya sudah ada di Data Penjualan -> Deal,
   // sisanya -> Arsip (tidak dihitung di win rate / hit rate). Data tiap kuartal disimpan sekali saja.
   const computeBulk = (cutoff)=>{
@@ -2670,6 +2798,7 @@ function MainApp({onDisconnect, binId}){
     );
     return (
       <span style={{display:"inline-flex",gap:6,flexWrap:"wrap"}}>
+        {st==="open" && btn("Draft FU", ()=>{ setFuDraftId(q.id); setTimeout(()=>{ const el=document.getElementById("fuDraftPanel"); if(el && el.scrollIntoView) el.scrollIntoView({behavior:"smooth",block:"start"}); },60); })}
         {st==="open" && btn("Deal", ()=>dealQuotationToSale(q), "var(--green)", "#fff")}
         {st==="open" && btn("Lost", ()=>markQuotationLost(q), "var(--red)", "#fff")}
         {st==="open" && btn("Sudah FU", ()=>markFollowedUp(q))}
@@ -2685,7 +2814,7 @@ function MainApp({onDisconnect, binId}){
     if(quoStatusFilter==="fu") return quoNeedsFu(q);
     return quoStatus(q)===quoStatusFilter;
   };
-  const quotationsFiltered = quotationsThisQ.filter(q=>
+  const quotationsFiltered = (quoSearchClean ? Object.values(quotationsByKey).flat() : quotationsThisQ).filter(q=>
     quoMatchesStatus(q) &&
     (!quoSearchClean || (q.docNo||"").toLowerCase().includes(quoSearchClean) || (q.trackerNo||"").toLowerCase().includes(quoSearchClean) || (q.customerName||"").toLowerCase().includes(quoSearchClean)));
   const quoCounts = {
@@ -2716,8 +2845,10 @@ function MainApp({onDisconnect, binId}){
     };
   })();
   const fuList = Object.values(quotationsByKey).flat().filter(quoNeedsFu)
-    .sort((a,b)=> daysSince(quoFuBase(b)) - daysSince(quoFuBase(a)));
+    .sort((a,b)=> workdaysSince(quoFuBase(b)) - workdaysSince(quoFuBase(a)));
   const bulkInfo = computeBulk(bulkCutoff);
+  const fuDraftQ = fuDraftId ? findQuotationById(fuDraftId) : null;
+  const fuDraft = fuDraftQ ? buildFuDraft(fuDraftQ) : null;
   const quotationsSorted = [...quotationsFiltered].sort((a,b)=> (b.savedAt||"").localeCompare(a.savedAt||""));
 
   // ===== Cek Validasi Kalkulasi (logika lokal, instan, tanpa API luar) =====
@@ -3042,7 +3173,7 @@ function MainApp({onDisconnect, binId}){
       "No": i+1, "Tanggal": q.docDate||"", "No. Dokumen": q.docNo||"", "Customer": UC(q.customerName),
       "Nilai (Rp)": Number(q.totalAll)||0,
       "Status": {deal:"Deal", lost:"Lost", arsip:"Arsip", open: quoNeedsFu(q)?"Open - perlu FU":"Open"}[quoStatus(q)],
-      "Tgl Status": q.statusAt||"", "Tgl Deal (masuk penjualan)": q.dealtDate||"", "Alasan Lost": q.lostReason||"", "Jml Follow Up": q.followUpCount||0
+      "Tgl Status": q.statusAt||"", "Tgl Deal (masuk penjualan)": q.dealtDate||"", "Alasan Lost": q.lostReason || (quoAutoLost(q) ? "Otomatis (lewat "+AUTO_LOST_MONTHS+" bulan tanpa kabar)" : ""), "Jml Follow Up": q.followUpCount||0
     }));
     const wsQuo = quoRows.length ? XLSX.utils.json_to_sheet(quoRows) : XLSX.utils.aoa_to_sheet([["Belum ada penawaran tersimpan tahun ini"]]);
     wsQuo["!cols"] = [{wch:5},{wch:12},{wch:18},{wch:34},{wch:16},{wch:16},{wch:12},{wch:18},{wch:30},{wch:12}];
@@ -3140,7 +3271,7 @@ function MainApp({onDisconnect, binId}){
     <div className="signer-card no-print">
       <h2 className="section" style={{marginTop:0}}>Cadangan Otomatis {helpBtn("autobackup")}</h2>
       <div className="extract-note" style={{marginTop:0}}>
-        Setiap kali Tracker VCS dibuka, seluruh data Cloud otomatis disalin diam-diam (maksimal 1x per hari, disimpan 7 hari terakhir).
+        Setiap kali Tracker VCS dibuka, seluruh data Cloud otomatis disalin diam-diam ke <b>perangkat ini</b> (bukan ke Cloud, supaya tidak memenuhi batas ukuran Cloud), maksimal 1x per hari, disimpan 3 hari terakhir. Cadangan hanya ada di HP/PC yang membukanya.
         Ini cadangan darurat kalau data Cloud utama rusak/tertimpa — bukan pengganti tombol "Backup Data Cloud (JSON)" di atas yang tetap perlu diunduh sendiri sesekali untuk disimpan di HP/PC.
       </div>
       {autoBackupList.length===0 ? (
@@ -3196,10 +3327,24 @@ function MainApp({onDisconnect, binId}){
       </div>
       <div className="greeting-bar no-print">{greeting.icon} {greeting.text}{greetingName ? ", "+greetingName+"!" : "!"}</div>
 
+      {legacySnaps.length>0 && (
+        <div className="no-print" style={{border:"2.5px solid var(--ink)",borderLeft:"9px solid var(--red)",background:"#FDECEA",padding:"12px 14px",marginBottom:12,fontFamily:"var(--sans)",fontSize:12.5}}>
+          <div style={{fontWeight:800,marginBottom:6}}>⚠ Cloud menyimpan {legacySnaps.length} cadangan otomatis lama yang menumpuk</div>
+          <div style={{marginBottom:8}}>Cadangan bentuk lama menyalin seluruh isi Cloud, termasuk cadangan hari sebelumnya, jadi ukurannya terus berlipat{cloudBytes>0 ? " (sekarang "+Math.round(cloudBytes/1024)+" KB)" : ""} dan bisa melewati batas JSONBin. Akibatnya menyimpan catatan gagal dengan <b>HTTP 403</b>. Klik tombol di bawah: data asli diunduh dulu sebagai file, lalu cadangan lama dibersihkan.</div>
+          <button className="icon-btn" disabled={cleanBusy} onClick={cleanupLegacySnaps}>{cleanBusy ? "Memproses..." : "Unduh data & bersihkan cadangan lama"}</button>
+          {cleanErr && <div style={{color:"var(--red)",fontWeight:700,marginTop:8}}>{cleanErr}</div>}
+        </div>
+      )}
+      {cleanMsg && <div className="no-print" style={{color:"var(--green)",fontWeight:700,fontSize:12.5,marginBottom:12,fontFamily:"var(--sans)"}}>{cleanMsg}</div>}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:4}}>
         <div className="cloud-badge" onClick={()=>{ if(window.confirm("Putuskan koneksi cloud di perangkat ini? Data di cloud tetap aman, cuma perlu disambungkan ulang lain kali.")) onDisconnect(); }} title="Klik untuk memutus/mengganti koneksi cloud di perangkat ini">
           <span className="cloud-dot"></span> Tersambung ke Cloud (Bin: {binId}) &middot; ubah koneksi
         </div>
+        {cloudBytes>0 && (
+          <div className="no-print" style={{fontFamily:"var(--sans)",fontSize:11,fontWeight:700,color: cloudBytes>92000 ? "var(--red)" : (cloudBytes>70000 ? "#B8860B" : "var(--green)")}}>
+            Data Cloud: {Math.round(cloudBytes/1024)} KB (batas paket gratis JSONBin 100 KB)
+          </div>
+        )}
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <label htmlFor="backupFileInput" title="Upload file backup (.json) dari tracker versi/device lain untuk digabung ke Cloud ini"
             style={{background:"var(--paper-raise)",color:"var(--ink)",border:"2.5px solid var(--ink)",padding:"9px 14px",fontFamily:"var(--sans)",fontWeight:800,fontSize:11,letterSpacing:0.4,cursor:"pointer",textTransform:"uppercase",display:"inline-flex",alignItems:"center"}}>
@@ -3904,7 +4049,7 @@ function MainApp({onDisconnect, binId}){
                   <thead><tr><th>#</th><th>No. Dokumen</th><th>Customer</th><th>Nilai</th><th>Alasan Lost</th></tr></thead>
                   <tbody>
                     {quoReport.lost.map((q,idx)=>(
-                      <tr key={q.id}><td>{idx+1}</td><td>{q.docNo}</td><td>{UC(q.customerName)}</td><td>{formatRupiah(q.totalAll)}</td><td>{q.lostReason||"-"}</td></tr>
+                      <tr key={q.id}><td>{idx+1}</td><td>{q.docNo}</td><td>{UC(q.customerName)}</td><td>{formatRupiah(q.totalAll)}</td><td>{q.lostReason || (quoAutoLost(q) ? "Otomatis (lewat "+AUTO_LOST_MONTHS+" bulan tanpa kabar)" : "-")}</td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -4251,15 +4396,15 @@ function MainApp({onDisconnect, binId}){
           {fuList.length>0 && (
             <div className="no-print" style={{border:"2.5px solid var(--ink)",borderLeft:"9px solid var(--yellow)",background:"#FFF3D6",padding:"12px 14px",marginBottom:16,fontFamily:"var(--sans)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                <div style={{fontWeight:800,fontSize:13}}>⏰ {fuList.length} penawaran perlu follow up (lewat {FOLLOWUP_DAYS} hari tanpa kabar)</div>
-                <button className="icon-btn" onClick={()=>copyToClipboard("*Follow up penawaran ("+new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'})+")*\n"+fuList.map((q,i)=>(i+1)+". "+(q.docNo||"-")+" - "+UC(q.customerName)+" - "+formatRupiah(q.totalAll)+" ("+daysSince(quoFuBase(q))+" hari)").join("\n"), "Daftar follow up")}>Salin daftar FU (WA)</button>
+                <div style={{fontWeight:800,fontSize:13}}>⏰ {fuList.length} penawaran perlu follow up (lewat {FOLLOWUP_WORKDAYS} hari kerja tanpa kabar)</div>
+                <button className="icon-btn" onClick={()=>copyToClipboard("*Follow up penawaran ("+new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'})+")*\n"+fuList.map((q,i)=>(i+1)+". "+(q.docNo||"-")+" - "+UC(q.customerName)+" - "+formatRupiah(q.totalAll)+" ("+workdaysSince(quoFuBase(q))+" hari kerja)").join("\n"), "Daftar follow up")}>Salin daftar FU (WA)</button>
               </div>
               {copyFeedback && <div className="extract-note" style={{fontStyle:"normal",fontWeight:700,color:"var(--green)"}}>{copyFeedback}</div>}
               {fuList.map(q=>(
                 <div key={q.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"6px 0",borderTop:"1.5px solid var(--line)",fontSize:12.5}}>
                   <span style={{flex:1,minWidth:200}}>
                     <b>{q.docNo||"(tanpa No.)"}</b> — {UC(q.customerName)||"-"} — {formatRupiah(q.totalAll)}
-                    <span className="meta" style={{color:"var(--red)",fontWeight:700}}> — {daysSince(quoFuBase(q))} hari</span>
+                    <span className="meta" style={{color:"var(--red)",fontWeight:700}}> — {workdaysSince(quoFuBase(q))} hari kerja</span>
                   </span>
                   {renderQuoStatusButtons(q)}
                 </div>
@@ -4280,6 +4425,32 @@ function MainApp({onDisconnect, binId}){
             </div>
           )}
 
+          {fuDraft && (
+            <div id="fuDraftPanel" className="no-print" style={{border:"2.5px solid var(--ink)",background:"var(--paper-raise)",padding:"12px 14px",marginBottom:16,fontFamily:"var(--sans)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                <div style={{fontWeight:800,fontSize:13}}>Draft Follow Up — {fuDraftQ.docNo||"-"} — {UC(String(fuDraftQ.customerName||"").replace(/^[A-Z]\d{3,6}\s*-\s*/i,""))}</div>
+                <span className="icon-btn" onClick={()=>setFuDraftId(null)}>Tutup</span>
+              </div>
+              {copyFeedback && <div style={{color:"var(--green)",fontWeight:700,fontSize:12,marginBottom:8}}>{copyFeedback}</div>}
+              <div style={{marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <label style={{fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,color:"var(--muted)"}}>Draft WhatsApp</label>
+                  <button className="icon-btn" onClick={()=>copyToClipboard(fuDraft.wa, "Draft FU WA")}>Copy Draft WA</button>
+                </div>
+                <textarea readOnly value={fuDraft.wa} rows={13} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} onFocus={e=>e.target.select()} />
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <label style={{fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,color:"var(--muted)"}}>Draft Email</label>
+                  <button className="icon-btn" onClick={()=>copyToClipboard("Subject: "+fuDraft.emailSubject+"\n\n"+fuDraft.emailBody, "Draft FU Email")}>Copy Draft Email</button>
+                </div>
+                <div style={{fontSize:11.5,fontWeight:700,marginBottom:4}}>Subject: {fuDraft.emailSubject}</div>
+                <textarea readOnly value={fuDraft.emailBody} rows={12} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} onFocus={e=>e.target.select()} />
+              </div>
+              <button className="icon-btn" onClick={()=>{ markFollowedUp(fuDraftQ); setFuDraftId(null); }}>Sudah dikirim: tandai sudah FU</button>
+            </div>
+          )}
+
           <div className="no-print">
             <h2 className="section" style={{marginBottom:10}}>Riwayat Penawaran — {quarter.label}</h2>
             <div className="extract-note" style={{fontStyle:"normal",fontWeight:600}}>
@@ -4293,6 +4464,7 @@ function MainApp({onDisconnect, binId}){
             <div style={{marginBottom:12}}>
               <label>🔍 Cari No. Dokumen / Customer</label>
               <input type="text" value={quoSearch} onChange={e=>setQuoSearch(e.target.value)} placeholder="mis. PQ06682 atau Bangun Mitra" />
+              {quoSearchClean && <div className="extract-note" style={{marginTop:6}}>Pencarian mencakup semua kuartal tahun {year}, termasuk yang sudah Lost / Arsip.</div>}
             </div>
             {quotationsSorted.length===0 ? (
               <div className="empty">{(quoSearchClean||quoStatusFilter!=="all") ? "Tidak ada penawaran yang cocok." : "Belum ada penawaran tersimpan di kuartal ini. Klik \"Simpan Penawaran\" setelah mengisi form untuk menambah ke riwayat."}</div>
@@ -4312,8 +4484,9 @@ function MainApp({onDisconnect, binId}){
                       {st==="deal" && <span className="st-badge" style={{background:"var(--green)"}}>Deal</span>}
                       {st==="lost" && <span className="st-badge" style={{background:"var(--red)"}}>Lost</span>}
                       {st==="arsip" && <span className="st-badge" style={{background:"#777"}}>Arsip</span>}
-                      {fu && <span className="st-badge" style={{background:"#B07C00"}}>Follow up {daysSince(quoFuBase(q))} hari</span>}
+                      {fu && <span className="st-badge" style={{background:"#B07C00"}}>Follow up {workdaysSince(quoFuBase(q))} hari kerja</span>}
                       {st==="lost" && q.lostReason && <span className="meta"> — {q.lostReason}</span>}
+                      {quoAutoLost(q) && <span className="meta"> — otomatis: lewat {AUTO_LOST_MONTHS} bulan tanpa kabar</span>}
                     </span>
                     <span className="date">{q.docDate ? new Date(q.docDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'short'}) : ""}</span>
                     <span className="icon-btn" style={{fontSize:11,padding:"3px 8px"}} onClick={()=>loadQuotationForEdit(q)}>Edit</span>
@@ -4540,7 +4713,7 @@ function MainApp({onDisconnect, binId}){
 
           <div className="faq-item">
             <h3>Apa arti status Deal, Lost, dan Perlu Follow Up di Riwayat Penawaran?</h3>
-            <p><strong>Deal</strong>: sekali klik, penawaran langsung masuk Data Penjualan dengan tanggal hari kamu klik Deal, jadi masuk kuartal saat deal terjadi (salah klik? pakai "Batal Deal"). <strong>Lost</strong>: penawaran gagal, alasan boleh diisi (bisa "Buka lagi"). <strong>Open</strong> yang sudah lewat 14 hari sejak tanggal penawaran (atau sejak follow up terakhir) otomatis muncul di kotak kuning "Perlu follow up" dan di tab menu. Klik <strong>"Sudah FU"</strong> setelah follow up, maka pengingat mulai hitung 14 hari lagi. Pengingat hanya mencakup tahun yang sudah dibuka di tracker ini. Penawaran lama yang menumpuk bisa dirapikan sekaligus lewat <strong>"Rapikan penawaran lama sekaligus"</strong> di kotak kuning: yang No. Dokumennya sudah ada di Data Penjualan jadi Deal, sisanya jadi <strong>Arsip</strong> (tidak dihitung di win rate dan tidak muncul di pengingat, bisa dibuka lagi).</p>
+            <p><strong>Deal</strong>: sekali klik, penawaran langsung masuk Data Penjualan dengan tanggal hari kamu klik Deal, jadi masuk kuartal saat deal terjadi (salah klik? pakai "Batal Deal"). <strong>Lost</strong>: penawaran gagal, alasan boleh diisi (bisa "Buka lagi"). <strong>Open</strong> yang sudah lewat <strong>7 hari kerja</strong> (Senin sampai Jumat, di luar hari libur) sejak tanggal penawaran atau follow up terakhir otomatis muncul di kotak kuning "Perlu follow up" dan di angka pada tab menu. Klik <strong>Draft FU</strong> untuk mendapat draft WA dan email follow up ke customer, kirim, lalu klik <strong>Sudah FU</strong>; hitungan 7 hari kerja mulai lagi. Penawaran Open yang sudah <strong>3 bulan</strong> tanpa Deal otomatis dianggap <strong>Lost</strong> (dihitung sebagai Lost di laporan), tapi tetap bisa dicari: ketik di kolom cari (mencakup semua kuartal tahun yang dibuka) atau pakai tab Lost. Klik <strong>Buka lagi</strong> kalau ternyata masih berjalan; hitungan 3 bulan mulai dari hari itu. Pengingat dan pencarian hanya mencakup tahun yang sudah dibuka di tracker ini. Penawaran lama yang menumpuk bisa dirapikan sekaligus lewat <strong>"Rapikan penawaran lama sekaligus"</strong> di kotak kuning: yang No. Dokumennya sudah ada di Data Penjualan jadi Deal, sisanya jadi <strong>Arsip</strong> (tidak dihitung di win rate dan tidak muncul di pengingat, bisa dibuka lagi).</p>
           </div>
           <div className="faq-item">
             <h3>Penawaran sudah PO, gimana menyamakan dengan PQ asli di AIS?</h3>
