@@ -1172,6 +1172,7 @@ function MainApp({onDisconnect, binId}){
   const [quoSN,setQuoSN] = useState("");
   const [quoMerk,setQuoMerk] = useState("");
   const [quoCustPoNo,setQuoCustPoNo] = useState("BY VISIT");
+  const [quoPrNo,setQuoPrNo] = useState("");
   const [quoDiscPct,setQuoDiscPct] = useState("0");
   const [quoPpnPct,setQuoPpnPct] = useState("11");
   const [quoPpnExclude,setQuoPpnExclude] = useState(false); // true = customer minta PPN tidak ditampilkan, ditulis "Exclude PPN"
@@ -2570,7 +2571,7 @@ function MainApp({onDisconnect, binId}){
     format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
     customerName: UC(quoCustomerName.trim()), address: quoAddress.trim(), phone: quoPhone.trim(),
     attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
-    custPoNo: quoCustPoNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
+    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
     aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
     scopeOn: quoScopeOn, scopeAuto: quoScopeAuto, scopeText: quoScopeAuto?quoScopeAutoText:quoScopeText, scopeTitle: quoScopeTitle, termsAuto: quoTermsAuto, termsText: quoTermsAuto?quoTermsAutoText:quoTermsText,
     signerId: signers.activeId || null,
@@ -2623,7 +2624,7 @@ function MainApp({onDisconnect, binId}){
     setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||localISO());
     setQuoCustomerName(UC(q.customerName||"")); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
     setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"");
-    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
+    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
     setQuoScopeOn(!!q.scopeOn); setQuoScopeAuto(q.scopeAuto!==false); setQuoScopeText(q.scopeText||""); setQuoScopeTitle(q.scopeTitle||"SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(q.termsAuto!==false); setQuoTermsText(q.termsText||"");
     setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -2636,7 +2637,7 @@ function MainApp({onDisconnect, binId}){
   const newQuotation = ()=>{
     setQuoEditingId(null);
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
-    setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT");
+    setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT"); setQuoPrNo("");
     setQuoDiscPct("0"); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
     setQuoScopeAuto(true); setQuoScopeText(""); setQuoScopeTitle("SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(true); setQuoTermsText("");
     setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
@@ -4329,6 +4330,12 @@ function MainApp({onDisconnect, binId}){
                   onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); document.querySelector(".parts-section .part-row input, .parts-section .part-row select")?.focus(); } }} />
               </div>
             )}
+            {quoFormat==="manual" && (
+              <div>
+                <label>📄 No. PR (opsional)</label>
+                <input type="text" value={quoPrNo} onChange={e=>setQuoPrNo(e.target.value)} placeholder="mis. 4200104492" />
+              </div>
+            )}
           </div>
 
           <datalist id="indentOriginDatalist">{INDENT_ORIGINS.map(o=><option key={o} value={o} />)}</datalist>
@@ -4698,6 +4705,7 @@ function MainApp({onDisconnect, binId}){
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div><b>DOCUMENT</b>: {quoDocNo}</div>
+                  {quoPrNo.trim() && <div><b>PR</b> : {quoPrNo.trim()}</div>}
                   <div><b>DOC. DATE</b> : {quoDocDate ? new Date(quoDocDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'}) : ""}</div>
                 </div>
               </div>
