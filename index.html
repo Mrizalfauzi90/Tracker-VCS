@@ -2525,7 +2525,32 @@ function MainApp({onDisconnect, binId}){
     const originalTitle = document.title;
     const safeDocNo = (quoDocNo||"Penawaran").trim().replace(/[\\/:*?"<>|]/g,"").replace(/\s+/g,"_");
     document.title = safeDocNo || "Penawaran";
-    const restoreTitle = ()=>{ document.title = originalTitle; window.removeEventListener("afterprint", restoreTitle); };
+    // Format manual: kalau isi lebih dari 1 halaman A4, kecilkan otomatis (maks. sampai 60%) supaya muat 1 halaman
+    let fitStyle = null;
+    try{
+      const el = document.getElementById("quotationPrintArea");
+      if(el && quoFormat==="manual"){
+        const oldStyle = el.getAttribute("style");
+        const hid = [...el.querySelectorAll(".no-print")].map(n=>[n, n.style.display]);
+        hid.forEach(p=>{ p[0].style.display="none"; });
+        el.style.width="718px"; el.style.maxWidth="none"; el.style.padding="0"; el.style.border="none"; el.style.zoom="1";
+        const h = el.offsetHeight;
+        if(oldStyle===null) el.removeAttribute("style"); else el.setAttribute("style", oldStyle);
+        hid.forEach(p=>{ p[0].style.display=p[1]; });
+        const avail = 1000; // tinggi isi A4 (273mm = sekitar 1031px) dikurangi sedikit ruang aman
+        if(h>avail){
+          const z = Math.max(0.6, avail/h);
+          fitStyle = document.createElement("style");
+          fitStyle.textContent = "@media print{#quotationPrintArea{zoom:"+z.toFixed(3)+" !important;}}";
+          document.head.appendChild(fitStyle);
+        }
+      }
+    }catch(e){ console.warn("fit A4 gagal", e); }
+    const restoreTitle = ()=>{
+      document.title = originalTitle;
+      if(fitStyle && fitStyle.parentNode) fitStyle.parentNode.removeChild(fitStyle);
+      window.removeEventListener("afterprint", restoreTitle);
+    };
     window.addEventListener("afterprint", restoreTitle);
     window.print();
   };
@@ -4693,7 +4718,7 @@ function MainApp({onDisconnect, binId}){
                 const grand=secs.reduce((a,x)=>a+x[1].total,0);
                 return (
                   <table className="quo-manual-table">
-                    <thead><tr><th colSpan={2} className="quo-manual-section-head">TOTAL OVERALL QUOTATION VALUE ({quoPpnExclude?"EXCLUDE PPN":"INCLUDE PPN"})</th></tr></thead>
+                    <thead><tr><th colSpan={2} className="quo-manual-section-head">TOTAL OVERALL QUOTATION VALUE ({(quoPpnExclude || (Number(quoPpnPct)||0)===0)?"EXCLUDE PPN":"INCLUDE PPN"})</th></tr></thead>
                     <tbody>
                       {secs.map(x=><tr key={x[0]}><td>{x[0]}</td><td style={{textAlign:"right",width:110}}>{Math.round(x[1].total).toLocaleString("id-ID")}</td></tr>)}
                       <tr className="quo-manual-total-row"><td className="quo-manual-total-lbl quo-manual-grandtotal" style={{textAlign:"center"}}>GRAND TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(grand).toLocaleString("id-ID")}</td></tr>
