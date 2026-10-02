@@ -371,15 +371,21 @@ window.__getCloudCfg = getCloudCfg;
 window.__setCloudCfg = setCloudCfg;
 window.__clearCloudCfg = clearCloudCfg;
 
+var GIST_FILE = "tracker.json";
+function __gistHeaders(tok){ return { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json" }; }
 function jsonbinReadAll(){
   var cfg = getCloudCfg();
   if(!cfg.apiKey || !cfg.binId) return Promise.reject(new Error("Cloud belum terhubung"));
-  return fetch("https://api.jsonbin.io/v3/b/" + cfg.binId + "/latest?t=" + Date.now(), {
-    headers: { "X-Master-Key": cfg.apiKey, "X-Bin-Meta": "false" },
-    cache: "no-store"
+  return fetch("https://api.github.com/gists/" + cfg.binId + "?t=" + Date.now(), {
+    headers: __gistHeaders(cfg.apiKey), cache: "no-store"
   }).then(function(r){
     if(!r.ok) return __jsonbinFail(r);
-    return r.text();
+    return r.json();
+  }).then(function(g){
+    var f = g.files && g.files[GIST_FILE];
+    if(!f) return "{}";
+    if(f.truncated && f.raw_url) return fetch(f.raw_url, {cache:"no-store"}).then(function(r){ return r.text(); });
+    return f.content || "{}";
   }).then(function(t){
     __reportCloudSize(t);
     var data = JSON.parse(t);
@@ -389,11 +395,14 @@ function jsonbinReadAll(){
 function jsonbinWriteAll(dataObj){
   var cfg = getCloudCfg();
   if(!cfg.apiKey || !cfg.binId) return Promise.reject(new Error("Cloud belum terhubung"));
+  // Kunci koneksi tidak boleh ikut tersimpan di data Cloud / file backup
+  delete dataObj["jsonbin_key"]; delete dataObj["jsonbin_bin"];
   var body = JSON.stringify(dataObj);
-  return fetch("https://api.jsonbin.io/v3/b/" + cfg.binId, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-Master-Key": cfg.apiKey },
-    body: body
+  var payload = { files: {} }; payload.files[GIST_FILE] = { content: body };
+  return fetch("https://api.github.com/gists/" + cfg.binId, {
+    method: "PATCH",
+    headers: Object.assign({ "Content-Type": "application/json" }, __gistHeaders(cfg.apiKey)),
+    body: JSON.stringify(payload)
   }).then(function(r){
     if(!r.ok) return __jsonbinFail(r, body);
     __reportCloudSize(body);
@@ -414,10 +423,9 @@ function __jsonbinFail(r, sentBody){
     var msg = "";
     try{ msg = (JSON.parse(t).message || "").toString(); }catch(e){}
     var hint = "";
-    if(r.status===403){
-      var kb = sentBody ? Math.round(new Blob([sentBody]).size/1024) : (window.__cloudBytes ? Math.round(window.__cloudBytes/1024) : 0);
-      hint = " (kemungkinan data Cloud melebihi batas ukuran paket JSONBin"+(kb?", sekarang sekitar "+kb+" KB; paket gratis maksimal 100 KB":"")+", atau kuota request habis)";
-    }
+    if(r.status===401) hint = " (token GitHub salah/kedaluwarsa)";
+    else if(r.status===403||r.status===429) hint = " (kemungkinan batas request GitHub tercapai, tunggu beberapa menit)";
+    else if(r.status===404) hint = " (Gist ID salah, atau token tidak punya izin gist)";
     throw new Error("HTTP " + r.status + (msg ? " - " + msg : "") + hint);
   });
 }
@@ -3342,7 +3350,7 @@ function MainApp({onDisconnect, binId}){
         </div>
         {cloudBytes>0 && (
           <div className="no-print" style={{fontFamily:"var(--sans)",fontSize:11,fontWeight:700,color: cloudBytes>92000 ? "var(--red)" : (cloudBytes>70000 ? "#B8860B" : "var(--green)")}}>
-            Data Cloud: {Math.round(cloudBytes/1024)} KB (batas paket gratis JSONBin 100 KB)
+            Data Cloud: {Math.round(cloudBytes/1024)} KB (Gist, batas praktis jauh lebih besar)
           </div>
         )}
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -4762,38 +4770,35 @@ function SetupScreen({onConnected}){
   const testAndSave = async()=>{
     const key = apiKey.trim();
     const bin = binId.trim();
-    if(!key){ setStatus({ok:false, msg:"API Key belum diisi."}); return; }
+    if(!key){ setStatus({ok:false, msg:"Token belum diisi."}); return; }
     setTesting(true); setStatus(null); setNewBinId("");
     try{
+      const H = {"Authorization":"Bearer "+key, "Accept":"application/vnd.github+json"};
       if(bin){
-        // Sudah punya Bin ID (device kedua dst) -> coba baca bin-nya buat pastikan cocok
-        const res = await fetch("https://api.jsonbin.io/v3/b/" + bin + "/latest", {
-          headers: { "X-Master-Key": key, "X-Bin-Meta": "false" }
-        });
+        const res = await fetch("https://api.github.com/gists/" + bin, { headers: H });
         if(!res.ok){
           const errData = await res.json().catch(()=>({}));
           throw new Error(errData.message || ("HTTP " + res.status));
         }
         window.__setCloudCfg(key, bin);
-        setStatus({ok:true, msg:"Berhasil tersambung ke bin yang sudah ada! Mengalihkan..."});
+        setStatus({ok:true, msg:"Berhasil tersambung ke Gist yang sudah ada! Mengalihkan..."});
         setTimeout(()=>onConnected(), 700);
       } else {
-        // Belum punya Bin ID -> buat bin baru sekali ini aja
-        const res = await fetch("https://api.jsonbin.io/v3/b", {
+        const res = await fetch("https://api.github.com/gists", {
           method: "POST",
-          headers: { "Content-Type":"application/json", "X-Master-Key": key, "X-Bin-Private":"true", "X-Bin-Name":"Tracker VCS DB" },
-          body: JSON.stringify({ _tracker_db: true, _created: new Date().toISOString() })
+          headers: Object.assign({"Content-Type":"application/json"}, H),
+          body: JSON.stringify({ description:"Tracker VCS DB", public:false, files:{ "tracker.json": { content: JSON.stringify({ _tracker_db: true, _created: new Date().toISOString() }) } } })
         });
         if(!res.ok){
           const errData = await res.json().catch(()=>({}));
           throw new Error(errData.message || ("HTTP " + res.status));
         }
         const data = await res.json();
-        const createdId = data && data.metadata && data.metadata.id;
-        if(!createdId) throw new Error("Bin ID tidak ditemukan di respons.");
+        const createdId = data && data.id;
+        if(!createdId) throw new Error("Gist ID tidak ditemukan di respons.");
         window.__setCloudCfg(key, createdId);
         setNewBinId(createdId);
-        setStatus({ok:true, msg:"Bin baru berhasil dibuat & tersambung! Catat Bin ID di bawah ini sebelum lanjut."});
+        setStatus({ok:true, msg:"Gist baru berhasil dibuat & tersambung! Catat Gist ID di bawah ini sebelum lanjut."});
       }
     }catch(e){
       setStatus({ok:false, msg:"Gagal tersambung. Detail: " + (e && e.message ? e.message : String(e))});
@@ -4806,23 +4811,23 @@ function SetupScreen({onConnected}){
     <div className="setup-wrap">
       <div className="setup-card">
         <h1>Hubungkan Tracker ke Cloud</h1>
-        <p>Supaya data bisa diinput dari HP, PC, atau perangkat mana saja dan tetap sinkron, tracker ini disambungkan ke satu penyimpanan online lewat JSONBin.io. Semua langkahnya bisa dilakukan dari HP, tidak perlu buka editor kode apapun.</p>
+        <p>Supaya data bisa diinput dari HP, PC, atau perangkat mana saja dan tetap sinkron, tracker ini disambungkan ke satu penyimpanan online lewat GitHub Gist. Semua langkahnya bisa dilakukan dari HP, tidak perlu buka editor kode apapun.</p>
         <ol>
-          <li>Buka <strong>jsonbin.io</strong> di browser HP, klik <strong>Create Account</strong> (bisa pakai email biasa).</li>
-          <li>Setelah masuk, buka menu <strong>API Keys</strong>, salin <strong>X-MASTER-KEY</strong> yang muncul di situ.</li>
-          <li>Tempel API Key itu di kolom pertama bawah ini.</li>
-          <li>Kalau ini perangkat <strong>pertama kali</strong> setup, kosongkan kolom Bin ID lalu klik tombol di bawah &mdash; sistem akan buatkan tempat penyimpanan baru otomatis.</li>
-          <li>Kalau ini perangkat <strong>kedua dst</strong> (mis. sudah setup di HP, sekarang di PC), isi juga kolom Bin ID dengan ID yang sudah dicatat sebelumnya, biar nyambung ke data yang sama.</li>
+          <li>Buka <strong>github.com/settings/tokens</strong>, buat <strong>Personal access token (classic)</strong> dengan centang <strong>gist</strong> saja.</li>
+          <li>Salin token yang muncul (hanya tampil sekali).</li>
+          <li>Tempel token itu di kolom pertama bawah ini.</li>
+          <li>Kalau ini perangkat <strong>pertama kali</strong> setup, kosongkan kolom Gist ID lalu klik tombol di bawah &mdash; sistem akan buatkan tempat penyimpanan baru otomatis.</li>
+          <li>Kalau ini perangkat <strong>kedua dst</strong> (mis. sudah setup di HP, sekarang di PC), isi juga kolom Gist ID dengan ID yang sudah dicatat sebelumnya, biar nyambung ke data yang sama.</li>
         </ol>
-        <input type="text" placeholder="X-Master-Key dari jsonbin.io" value={apiKey} onChange={e=>setApiKey(e.target.value)} />
-        <input type="text" placeholder="Bin ID (kosongkan kalau baru pertama kali setup)" value={binId} onChange={e=>setBinId(e.target.value)} />
+        <input type="text" placeholder="Token GitHub (izin gist)" value={apiKey} onChange={e=>setApiKey(e.target.value)} />
+        <input type="text" placeholder="Gist ID (kosongkan kalau baru pertama kali setup)" value={binId} onChange={e=>setBinId(e.target.value)} />
         <button className="add-btn" style={{marginTop:0}} onClick={testAndSave} disabled={testing}>
           {testing ? "Menguji koneksi..." : "Uji & Simpan Koneksi"}
         </button>
         {status && <div className={"setup-status "+(status.ok?"ok":"bad")}>{status.msg}</div>}
         {newBinId && (
           <div style={{marginTop:14}}>
-            <label style={{fontFamily:"var(--sans)",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,color:"var(--muted)"}}>Bin ID (catat ini untuk sambungkan device lain)</label>
+            <label style={{fontFamily:"var(--sans)",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,color:"var(--muted)"}}>Gist ID (catat ini untuk sambungkan device lain)</label>
             <input type="text" readOnly value={newBinId} onFocus={e=>e.target.select()} style={{marginTop:6,fontWeight:700}} />
             <button className="icon-btn" style={{marginTop:8}} onClick={()=>onConnected()}>Lanjut ke Tracker &rarr;</button>
           </div>
