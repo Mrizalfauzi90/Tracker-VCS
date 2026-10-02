@@ -1182,6 +1182,12 @@ function MainApp({onDisconnect, binId}){
   const [quoConsumable,setQuoConsumable] = useState([{desc:"", qty:"", unitPrice:"", remark:""}]);
   const [quoService,setQuoService] = useState([{desc:"", qty:"", unitPrice:"", remark:""}]);
   const [quoManualDiscPct,setQuoManualDiscPct] = useState("0");
+  const [quoScopeOn,setQuoScopeOn] = useState(false);
+  const [quoScopeAuto,setQuoScopeAuto] = useState(true);
+  const [quoScopeText,setQuoScopeText] = useState("");
+  const [quoScopeTitle,setQuoScopeTitle] = useState("SCOPE PEKERJAAN / SERVICE");
+  const [quoTermsAuto,setQuoTermsAuto] = useState(true);
+  const [quoTermsText,setQuoTermsText] = useState("");
   const [quotationsByKey,setQuotationsByKey] = useState({});
   const [quoEditingId,setQuoEditingId] = useState(null);
   const [quoSearch,setQuoSearch] = useState("");
@@ -2268,6 +2274,36 @@ function MainApp({onDisconnect, binId}){
     service: calcSection(quoService, false, 0, quoPpnExclude?0:quoPpnPct)
   }),[quoSpareParts, quoConsumable, quoService, quoManualDiscPct, quoPpnPct, quoPpnExclude]);
 
+  // Scope kerja otomatis dari Spare Parts + Consumable
+  const quoScopeAutoText = useMemo(()=>{
+    const ABBR = {TIL:"Tilt",TILT:"Tilt",STE:"Steering",STEER:"Steering",STEERI:"Steering",STEERIN:"Steering",STEERING:"Steering",LIF:"Lift",LIFT:"Lift"};
+    const tc = t=>t.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+    const nameOf = d=>{ const p=String(d||"").split(","); const n=(p.length>1?p.slice(1):p).map(x=>x.trim()).filter(Boolean); return n; };
+    const clean = n=>n.join(" ").split(/\s+/).filter(w=>!/\d/.test(w)).map(w=>ABBR[w.toUpperCase()]||w).join(" ").trim();
+    const spare = quoSpareParts.filter(r=>r.desc&&r.desc.trim()).map(r=>{
+      const n=nameOf(r.desc); if(!n.length) return "";
+      if(/SEAL KIT/i.test(n[0])){ const k=ABBR[(n[1]||"").toUpperCase()]; if(k) return "Exchange Seal Kit "+k+" Cylinder"; }
+      const c=clean(n); return c ? "Exchange "+tc(c) : "";
+    });
+    const cons = quoConsumable.filter(r=>r.desc&&r.desc.trim()).map(r=>{
+      const n=nameOf(r.desc); const up=n.join(" ").toUpperCase(); if(!n.length) return "";
+      if(/HYDRA/.test(up)) return "Top Up / Exchange Hydraulic Fluid";
+      if(/OIL|OLI/.test(up) && /ENGINE|MESIN/.test(up)) return "Exchange Engine Oil";
+      const c=clean(n); return c ? "Top Up / Exchange "+tc(c) : "";
+    });
+    const out=[]; [...spare,...cons].forEach(l=>{ if(l && !out.includes(l)) out.push(l); });
+    if(out.length){ out.push("Pengecekan kondisi umum unit"); out.push("Uji fungsi setelah service"); }
+    return out.join("\n");
+  },[quoSpareParts, quoConsumable]);
+  const quoScopeLines = (quoScopeAuto ? quoScopeAutoText : quoScopeText).split("\n").map(x=>x.trim()).filter(Boolean);
+  const quoTermsAutoText = [
+    "Garansi 200 jam 24 hari kerja",
+    "Pengiriman dan Pekerjaan Franco "+((quoCustomerName||"").trim())+" Estimasi +/- 2 Minggu setelah PO",
+    "Payment terms 30 hari setelah invoice diterima",
+    "Quotation berlaku 2 minggu dari tanggal dokumen"
+  ].join("\n").replace("Franco  Estimasi","Franco Estimasi");
+  const quoTermsLines = (quoTermsAuto ? quoTermsAutoText : quoTermsText).split("\n").map(x=>x.trim()).filter(Boolean);
+
   // ===== Pengaturan penawaran (disimpan di Cloud, ikut ke semua perangkat) =====
   const QS_DEFAULT = {ppn:"11", branch:"02-CILEGON", custPo:"BY VISIT", validity:"Penawaran Berlaku 2 minggu.", watermark:true};
   const [quoSettings,setQuoSettings] = useState(QS_DEFAULT);
@@ -2511,6 +2547,7 @@ function MainApp({onDisconnect, binId}){
     attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
     custPoNo: quoCustPoNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
     aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
+    scopeOn: quoScopeOn, scopeAuto: quoScopeAuto, scopeText: quoScopeAuto?quoScopeAutoText:quoScopeText, scopeTitle: quoScopeTitle, termsAuto: quoTermsAuto, termsText: quoTermsAuto?quoTermsAutoText:quoTermsText,
     signerId: signers.activeId || null,
     totalAll: quoFormat==="ais" ? Math.round(quoAisCalc.total) : Math.round(quoManualCalc.spareParts.total+quoManualCalc.consumable.total+quoManualCalc.service.total),
     savedAt: new Date().toISOString()
@@ -2562,6 +2599,7 @@ function MainApp({onDisconnect, binId}){
     setQuoCustomerName(UC(q.customerName||"")); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
     setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"");
     setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
+    setQuoScopeOn(!!q.scopeOn); setQuoScopeAuto(q.scopeAuto!==false); setQuoScopeText(q.scopeText||""); setQuoScopeTitle(q.scopeTitle||"SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(q.termsAuto!==false); setQuoTermsText(q.termsText||"");
     setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
     setQuoConsumable(q.consumable && q.consumable.length ? q.consumable : [{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -2575,6 +2613,7 @@ function MainApp({onDisconnect, binId}){
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
     setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT");
     setQuoDiscPct("0"); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
+    setQuoScopeAuto(true); setQuoScopeText(""); setQuoScopeTitle("SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(true); setQuoTermsText("");
     setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts([{desc:"", qty:"", unitPrice:"", remark:""}]);
     setQuoConsumable([{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -4120,7 +4159,8 @@ function MainApp({onDisconnect, binId}){
 
           <div className="type-toggle no-print" style={{maxWidth:420,marginBottom:18}}>
             <div className={"type-btn"+(quoFormat==="ais"?" active-visit":"")} onClick={()=>switchQuoFormat("ais")}>Format AIS System</div>
-            <div className={"type-btn"+(quoFormat==="manual"?" active-call":"")} onClick={()=>switchQuoFormat("manual")}>Format Manual BMP</div>
+            <div className={"type-btn"+(quoFormat==="manual"&&!quoScopeOn?" active-call":"")} onClick={()=>{ setQuoScopeOn(false); if(quoFormat!=="manual") switchQuoFormat("manual"); }}>Format Manual BMP</div>
+            <div className={"type-btn"+(quoFormat==="manual"&&quoScopeOn?" active-call":"")} onClick={()=>{ setQuoScopeOn(true); if(quoFormat!=="manual") switchQuoFormat("manual"); }}>Manual + Scope Kerja</div>
           </div>
           <details className="no-print" style={{marginBottom:18}}>
             <summary style={{cursor:"pointer",fontFamily:"var(--sans)",fontWeight:700,fontSize:12.5}}>Pengaturan penawaran (PPN standar, cabang, masa berlaku, watermark)</summary>
@@ -4367,6 +4407,23 @@ function MainApp({onDisconnect, binId}){
                   )}
                 </div>
               ))}
+              {quoFormat==="manual" && quoScopeOn && (
+                <div style={{border:"2px dashed #8a8472",padding:10,marginTop:8,marginBottom:8}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:6}}>
+                    <b style={{fontSize:12}}>Scope Pekerjaan / Service</b>
+                    <span className="price-hint" style={{margin:0}}>{quoScopeAuto ? "Otomatis mengikuti part & consumable di atas" : "Diedit manual (tidak ikut berubah)"}</span>
+                    {!quoScopeAuto && <button type="button" className="icon-btn" onClick={()=>setQuoScopeAuto(true)}>&#8635; Isi otomatis lagi</button>}
+                  </div>
+                  <input type="text" value={quoScopeTitle} onChange={e=>setQuoScopeTitle(e.target.value.toUpperCase())} style={{marginBottom:6,fontSize:12}} />
+                  <textarea rows={7} value={quoScopeAuto?quoScopeAutoText:quoScopeText} onChange={e=>{ setQuoScopeText(e.target.value); setQuoScopeAuto(false); }} placeholder="Isi part & consumable dulu, scope muncul otomatis. Satu baris = satu poin." style={{width:"100%",boxSizing:"border-box",fontSize:12.5,padding:"8px 10px",border:"2px solid #141210",fontFamily:"inherit"}} />
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",margin:"10px 0 6px"}}>
+                    <b style={{fontSize:12}}>Syarat (Garansi, Franco, Payment terms)</b>
+                    <span className="price-hint" style={{margin:0}}>{quoTermsAuto ? "Default, nama customer ikut otomatis" : "Diedit manual"}</span>
+                    {!quoTermsAuto && <button type="button" className="icon-btn" onClick={()=>setQuoTermsAuto(true)}>&#8635; Kembalikan default</button>}
+                  </div>
+                  <textarea rows={4} value={quoTermsAuto?quoTermsAutoText:quoTermsText} onChange={e=>{ setQuoTermsText(e.target.value); setQuoTermsAuto(false); }} style={{width:"100%",boxSizing:"border-box",fontSize:12.5,padding:"8px 10px",border:"2px solid #141210",fontFamily:"inherit"}} />
+                </div>
+              )}
               <div className="sales-target-row">
                 <span>PPN (%) — berlaku untuk semua section:</span>
                 <input type="number" min="0" max="100" step="0.1" value={quoPpnPct} onChange={e=>setQuoPpnPct(e.target.value)} style={{width:90}} />
@@ -4624,9 +4681,30 @@ function MainApp({onDisconnect, binId}){
               {renderManualSection("SPARE PARTS", quoManualCalc.spareParts, true)}
               {renderManualSection("CONSUMABLE/COMMODITY", quoManualCalc.consumable, false)}
               {renderManualSection("SERVICE", quoManualCalc.service, false)}
+              {quoScopeOn && quoScopeLines.length>0 && (
+                <table className="quo-manual-table">
+                  <thead><tr><th className="quo-manual-section-head">{quoScopeTitle}</th></tr></thead>
+                  <tbody><tr><td>{quoScopeLines.map((l,i)=><div key={i}>{l}</div>)}</td></tr></tbody>
+                </table>
+              )}
+              {quoScopeOn && (()=>{
+                const secs=[["SPARE PARTS",quoManualCalc.spareParts],["CONSUMABLE/COMMODITY",quoManualCalc.consumable],["SERVICE",quoManualCalc.service]].filter(x=>x[1].totalValue>0);
+                if(!secs.length) return null;
+                const grand=secs.reduce((a,x)=>a+x[1].total,0);
+                return (
+                  <table className="quo-manual-table">
+                    <thead><tr><th colSpan={2} className="quo-manual-section-head">TOTAL OVERALL QUOTATION VALUE ({quoPpnExclude?"EXCLUDE PPN":"INCLUDE PPN"})</th></tr></thead>
+                    <tbody>
+                      {secs.map(x=><tr key={x[0]}><td>{x[0]}</td><td style={{textAlign:"right",width:110}}>{Math.round(x[1].total).toLocaleString("id-ID")}</td></tr>)}
+                      <tr className="quo-manual-total-row"><td className="quo-manual-total-lbl quo-manual-grandtotal" style={{textAlign:"center"}}>GRAND TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(grand).toLocaleString("id-ID")}</td></tr>
+                    </tbody>
+                  </table>
+                );
+              })()}
 
               <div className="quo-manual-signblock">
-                {quoSettings.validity && <div className="quo-manual-note-italic">{quoSettings.validity}</div>}
+                {quoScopeOn && quoTermsLines.length>0 && <div style={{fontSize:11,margin:"6px 0 8px 14px",lineHeight:1.5}}>{quoTermsLines.map((l,i)=><div key={i}>{l}</div>)}</div>}
+                {quoSettings.validity && !(quoScopeOn && quoTermsLines.length>0) && <div className="quo-manual-note-italic">{quoSettings.validity}</div>}
                 {quoAnyStock && <div className="quo-manual-note-italic">{STOCK_DISCLAIMER}</div>}
                 <div className="quo-manual-sign-row">
                   <div>PT. BERCA MANDIRI PERKASA</div>
