@@ -2239,11 +2239,12 @@ function MainApp({onDisconnect, binId}){
   const quoServiceH = makeSectionRowHelpers(setQuoService, {desc:"", qty:"", unitPrice:"", remark:""});
 
   const quoAisCalc = useMemo(()=>{
-    const rows = quoAisRows.map(r=>{ const g=(Number(r.qty)||0)*(Number(r.unitPrice)||0); const dp=Math.min(100,Math.max(0,Number(r.disc)||0)); return {...r, qtyNum:Number(r.qty)||0, priceNum:Number(r.unitPrice)||0, ext:g, dPct:dp, rowDisc:g*dp/100}; });
+    const rows = quoAisRows.map(r=>{ const dp=Math.min(100,Math.max(0,Number(r.disc)||0)); const q=Number(r.qty)||0; const pr=Math.round((Number(r.unitPrice)||0)*(1-dp/100)); return {...r, qtyNum:q, priceNum:pr, ext:q*pr, dPct:dp, rowDisc:0}; });
     const totalValue = rows.reduce((s,r)=>s+r.ext,0);
-    const rowDiscSum = rows.reduce((s,r)=>s+r.rowDisc,0);
-    const discPct = Number(quoDiscPct)||0;
-    const discAmt = rowDiscSum + (totalValue-rowDiscSum)*discPct/100;
+    const rowDiscSum = 0;
+    const anyRowDisc = rows.some(r=>r.dPct>0);
+    const discPct = anyRowDisc ? 0 : (Number(quoDiscPct)||0);
+    const discAmt = totalValue*discPct/100;
     const afterDisc = totalValue-discAmt;
     const ppnPct = quoPpnExclude ? 0 : (Number(quoPpnPct)||0);
     const ppn = afterDisc*(ppnPct/100);
@@ -2252,10 +2253,10 @@ function MainApp({onDisconnect, binId}){
   },[quoAisRows, quoDiscPct, quoPpnPct, quoPpnExclude]);
 
   const calcSection = (rows, applyDisc, discPct, ppnPct)=>{
-    const r2 = rows.map(r=>{ const g=(Number(r.qty)||0)*(Number(r.unitPrice)||0); const dp=Math.min(100,Math.max(0,Number(r.disc)||0)); return {...r, qtyNum:Number(r.qty)||0, priceNum:Number(r.unitPrice)||0, ext:g, dPct:dp, rowDisc:g*dp/100}; });
+    const r2 = rows.map(r=>{ const dp=Math.min(100,Math.max(0,Number(r.disc)||0)); const q=Number(r.qty)||0; const pr=Math.round((Number(r.unitPrice)||0)*(1-dp/100)); return {...r, qtyNum:q, priceNum:pr, ext:q*pr, dPct:dp, rowDisc:0}; });
     const totalValue = r2.reduce((s,r)=>s+r.ext,0);
-    const rowDiscSum = r2.reduce((s,r)=>s+r.rowDisc,0);
-    const discAmt = rowDiscSum + (applyDisc ? (totalValue-rowDiscSum)*(Number(discPct)||0)/100 : 0);
+    const anyRowDisc = r2.some(r=>r.dPct>0);
+    const discAmt = (applyDisc && !anyRowDisc) ? totalValue*(Number(discPct)||0)/100 : 0;
     const afterDisc = totalValue-discAmt;
     const ppn = afterDisc*((Number(ppnPct)||0)/100);
     const total = afterDisc+ppn;
@@ -3046,11 +3047,11 @@ function MainApp({onDisconnect, binId}){
         {calc.rows.map((r,idx)=>(
           <tr key={idx}>
             <td>{idx+1}</td>
-            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}{r.dPct>0 ? <div className="quo-stock">Disc {r.dPct}% : -{Math.round(r.rowDisc).toLocaleString("id-ID")}</div> : null}</td>
+            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
             <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
             <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
             <td style={{textAlign:"right"}}>{r.ext?r.ext.toLocaleString("id-ID"):""}</td>
-            <td>{r.remark}</td>
+            <td>{r.remark}{r.dPct>0 ? <div style={{fontWeight:700}}>Diskon {r.dPct}%</div> : null}</td>
           </tr>
         ))}
         <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl">TOTAL VALUE</td><td className="quo-manual-total-val">{calc.totalValue.toLocaleString("id-ID")}</td><td></td></tr>
@@ -4294,7 +4295,7 @@ function MainApp({onDisconnect, binId}){
                       <span style={{fontSize:11.5,fontWeight:700}}>Diskon part ini</span>
                       <input type="number" min="0" max="100" step="any" placeholder="0" value={r.disc||""} onChange={e=>updateQuoAisRow(idx,"disc",e.target.value)} style={{width:72,fontSize:11.5,padding:"6px 9px"}} />
                       <span style={{fontSize:11.5}}>%</span>
-                      {Number(r.disc)>0 && Number(r.unitPrice)>0 && <span className="price-hint" style={{margin:0}}>= Rp {Math.round(Number(r.unitPrice)*(1-Math.min(100,Number(r.disc))/100)).toLocaleString("id-ID")} / unit setelah diskon</span>}
+                      {Number(r.disc)>0 && Number(r.unitPrice)>0 && <span className="price-hint" style={{margin:0}}>Unit Price di penawaran: Rp {Math.round(Number(r.unitPrice)*(1-Math.min(100,Number(r.disc))/100)).toLocaleString("id-ID")} / unit (harga di penawaran)</span>}
                     </div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
                       <input type="text" placeholder="No. Part lama / baru terkait (opsional, ikut tampil di penawaran)" value={r.supersede||""} onChange={e=>updateQuoAisRow(idx,"supersede",e.target.value.toUpperCase())} style={{fontSize:11.5,padding:"6px 9px",flex:"1 1 200px",minWidth:0}} />
@@ -4345,7 +4346,7 @@ function MainApp({onDisconnect, binId}){
                         <span style={{fontSize:11.5,fontWeight:700}}>Diskon part ini</span>
                         <input type="number" min="0" max="100" step="any" placeholder="0" value={r.disc||""} onChange={e=>sec.h.update(idx,"disc",e.target.value)} style={{width:72,fontSize:11.5,padding:"6px 9px"}} />
                         <span style={{fontSize:11.5}}>%</span>
-                        {Number(r.disc)>0 && Number(r.unitPrice)>0 && <span className="price-hint" style={{margin:0}}>= Rp {Math.round(Number(r.unitPrice)*(1-Math.min(100,Number(r.disc))/100)).toLocaleString("id-ID")} / unit setelah diskon</span>}
+                        {Number(r.disc)>0 && Number(r.unitPrice)>0 && <span className="price-hint" style={{margin:0}}>Unit Price di penawaran: Rp {Math.round(Number(r.unitPrice)*(1-Math.min(100,Number(r.disc))/100)).toLocaleString("id-ID")} / unit (harga di penawaran)</span>}
                       </div>
                       {sec.useDatalist && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
                         <input type="text" placeholder="No. Part lama / baru terkait (opsional, ikut tampil di penawaran)" value={r.supersede||""} onChange={e=>sec.h.update(idx,"supersede",e.target.value.toUpperCase())} style={{fontSize:11.5,padding:"6px 9px",flex:"1 1 200px",minWidth:0}} />
@@ -4566,7 +4567,7 @@ function MainApp({onDisconnect, binId}){
                 <tbody>
                   {quoAisCalc.rows.map((r,idx)=>(
                     <tr key={idx}>
-                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}{r.dPct>0 ? <div className="quo-stock">Disc {r.dPct}% : -{Math.round(r.rowDisc).toLocaleString("id-ID")}</div> : null}</td>
+                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}{r.dPct>0 ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
                       <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
                       <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
                       <td style={{textAlign:"right"}}>{r.ext?("IDR "+r.ext.toLocaleString("id-ID")):""}</td>
