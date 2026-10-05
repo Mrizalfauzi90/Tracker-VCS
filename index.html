@@ -452,7 +452,8 @@ window.storage = {
   },
   set: function(key, value){
     return __enqueue(function(){
-      return jsonbinReadAll().catch(function(){ return {}; }).then(function(data){
+      // Kalau baca Cloud gagal, simpan dibatalkan (tidak lagi menulis dari data kosong yang bisa menimpa seluruh isi Gist)
+      return jsonbinReadAll().then(function(data){
         data[key] = value;
         return jsonbinWriteAll(data);
       }).then(function(){ return { key: key, value: value }; });
@@ -460,7 +461,7 @@ window.storage = {
   },
   delete: function(key){
     return __enqueue(function(){
-      return jsonbinReadAll().catch(function(){ return {}; }).then(function(data){
+      return jsonbinReadAll().then(function(data){
         delete data[key];
         return jsonbinWriteAll(data);
       }).then(function(){ return { key: key, deleted: true }; });
@@ -477,6 +478,11 @@ window.storage = {
 <script type="text/babel">
 
 const {useState,useEffect,useMemo,useRef} = React;
+
+// Data unit per customer (dari file Customer). Hanya ada di kode, tidak ikut tersimpan ke Cloud.
+// Format: kunci nama customer (tanpa PT/CV dan kode) -> [[merk, model, serial number], ...]
+const UNIT_DIRECTORY = {"SANTOSA AGRINDO":[["MITSUBISHI","FD30PD-2FP30-PS/PS","CF14J15046"]],"SUMATRACO LANGGENG MAKMUR":[["LONKING","LG30DT",""],["LONKING","LG30GLT",""],["LONKING","CDM932NG",""]],"DEKADE PRIORITAS":[["LONKING","ZL50C","LSH050NCEMAA11786"],["LONKING","CDM 512B","LSL0512BHMA501836"],["LONKING","CDM6060","LSW0060DPN0009198"],["MITSUBISHI","FG30ND-3FP47-PS/PS","CF13F-48661"],["LONKING","CDM6225","LSW225EKEM0085518"]],"NIPPON SHOKUBAI INDONESIA":[["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84706"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71115"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71114"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71118"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71119"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84055"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84705"]],"PRATAMA MANDIRI MULYA":[["LONKING","LG876","LSH0876NCNAC10955"]],"INDOHARA CIKANDE":[["MITSUBISHI","FD30ND-2SP30-PS/PS","CF14E-19291"]],"BAHARI MAKMUR SEJATI":[["NICHIYU","FBRAW15-75C-600MCS","182ZR3074"],["MITSUBISHI","FD25NT-2SP40-PS/PS","CF18C-71278"]],"BERKAH MANIS MAKMUR":[["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40232"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40236"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40237"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40238"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40239"]],"BANTEN PUTRA JAYA MANDIRI":[["MITSUBISHI","FD30HS-3FP40-PS/PS","CF51-10032"]],"SELAGO MAKMUR PLANTATION":[["MITSUBISHI","FD50N-2SP50-SPED","CF28C-50155"]],"KARUNIA BERCA INDONESIA":[["MITSUBISHI","FD30NT-2SP30-PS/PS","CF14E-19224"]],"BUDI TEXINDO PRAKARSA":[["MITSUBISHI","FD30ND-2FP30-PS/PS","CF14E-19800"]],"YULIANA INTI PERSADA":[["LONKING","CDM307","LSL00307CNA882258"]],"JM MUTU UTAMA":[["MITSUBISHI","FD35ND-3FP43-PS/PS","CF14E-87304"]],"ARTHA JAYA MAS":[["MITSUBISHI","FD25NT-2SP30-PS/PS","CF18C-84238"]],"TIRTA BINTANG FORTUNA":[["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84597"]],"POLYPLAST DWIPUTRA PRATAMA":[["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84489"],["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84490"]],"AGATA MAS CIKUPA":[["MITSUBISHI","FD30ND-3FP47-PS/PS","CF14E-22099"]],"NURIT IRIYANTO":[["MITSUBISHI","FD30PD-2SP30-US/US","CF14J-15201"]],"BEREMPAT MAJU SEJAHTERA":[["MITSUBISHI","FD30PD-2SP40-PS/PS","CF14J-15269"]],"GALVINDO INTISELARAS":[["MITSUBISHI","FD35NT-2SP30-US/US","CF14E-87352"]],"GARI SETIAWAN MAKMUR":[["LONKING","CDM312","LSL00312CPA601350"]],"MEDIKARYA AMINAH UTAMA":[["BP","KTA19 G4/BP C550S","41355011"]],"PRATAMA WIDYA":[["BP","6LTAA8.9 G2/BP C275DS","93227339"]],"JAPFA COMFEED INDONESIA":[["MITSUBISHI","FD35ND-2SP50-PS/PS","CF14E-87222"]],"TRI SEKAWAN MAJU":[["BYD","CPD25","50001232813"]],"SATRIA PIRANTI PERKASA":[["MITSUBISHI","FD35ND-2SP50-UD/US","CF14E-87245"]],"CIPTAPAPERIA":[["LONKING","CDM833","LSH0833NHPAC07308"]],"SEIWA LOGISTICS INDONESIA":[["NICHIYU","FB15PN-80C 300SF","256F-01368"],["NICHIYU","FB15PN-80C 300SF","256F-01369"]],"NIKOMAS GEMILANG":[["NICHIYU","FBR20-75","186E00184"]],"SUMBER KARYA UTAMA":[["LONKING","CDM307","LSL00307CRA601963"]],"INTERCIPTA KIMIA PRATAMA":[["MITSUBISHI","FD25NT-2FP30-PS/PS","CF18C-83912"]],"INTI CELLULOSEUTAMA INDONESIA":[["MITSUBISHI","FD30ND-3FP43-PS/PS","CF14E-22015"]],"INFRA SOLUSI INDONESIA":[["NICHIYU","FB15-80 430M","256F-01159"]],"RANGKAS MULYA SENTOSA":[["NICHIYU","FB18-80 500","256F00895"],["NICHIYU","FB18-80 500","256F00424"]],"MUTIARA FORKLIFT":[["MITSUBISHI","FD30ND-3FP43-PS/PS","F14E-11859"]],"INDOCERA UTAMA PRECISI":[["MITSUBISHI","FD30PD-3FP47-PS/PS","CF14J16087"]],"SUMBER KABEL INDONESIA":[["NOBLELIFT","CPD25-AF1H","NL1202552485"]],"BICC BERCA CABLES":[["MITSUBISHI","FD50N-2SP40-SPED","CF28C51850"]],"BANDO INDONESIA":[["BYD","CPD30","50201253678"]],"KARSAVICTA SATYA":[["BYD","CPD25 4500M FFL","50001242398"]],"VISTA CHEM INDONESIA":[["BYD","CPD25 5000MM","50001251523"]],"ADYABOGA PRANATA INDUSTRIES":[["NICHIYU","PLD20S-N507",""]],"ALAMKACA PRABAWA INDONESIA":[["MITSUBISHI","FD35ND",""]],"NATURAL GLASS PRABAWA INDONESIA":[["MITSUBISHI","FD35ND",""]],"AGUNG ABADI SENTOSA":[["MITSUBISHI","FD30D",""]],"AMOCO MITSUI PTA INDONESIA":[["MITSUBISHI","FG30ND",""]],"ARAI RUBBER SEAL INDONESIA":[["MITSUBISHI","FD35ND",""]],"ANUGRAH MITRAMAS PRATAMA":[["MITSUBISHI","FD25ND",""]],"APIKAYU GLYCERIN REFINERY":[["LONKING","CLG816C","LGZ816CZJJZ"]],"ALVINDO MULTI SEJAHTERA":[["MITSUBISHI","FD30ND",""]],"AGUNG PELITA INDUSTRINDO":[["MITSUBISHI","FD30NT",""]]};
+const unitKey = n => String(n==null?"":n).toUpperCase().trim().replace(/^[A-Z]\d{3,6}\s*-\s*/,"").replace(/\bPT\b\.?|\bCV\b\.?|\bTBK\b|[.,]/g,"").replace(/\s+/g," ").trim();
 
 const SEED_CUSTOMERS = [
   "PT. Santosa Agrindo","PT. Sumatraco Langgeng Makmur","PT. Dekade Prioritas","PT. Nippon Shokubai Indonesia",
@@ -1604,6 +1610,10 @@ function MainApp({onDisconnect, binId}){
   const holidays = useMemo(()=>getHolidaysForYear(year),[year]);
 
   const activeCustomers = useMemo(()=>customers.filter(c=>c.active).sort((a,b)=>a.name.localeCompare(b.name)),[customers]);
+  const customerUnits = useMemo(()=>{
+    const list = UNIT_DIRECTORY[unitKey(quoCustomerName)] || [];
+    return list.map(u=>({b:u[0], m:u[1], s:u[2]}));
+  },[quoCustomerName]);
   useEffect(()=>{ if(!selectedId && activeCustomers.length>0) setSelectedId(activeCustomers[0].id); },[activeCustomers]);
   useEffect(()=>{
     if(!custDropdownOpen){
@@ -2175,6 +2185,14 @@ function MainApp({onDisconnect, binId}){
   const pcFiltered = pcSearchClean
     ? knownParts.filter(p=> p.partNo.toLowerCase().includes(pcSearchClean) || (p.desc||"").toLowerCase().includes(pcSearchClean) || (p.supersede||"").toLowerCase().includes(pcSearchClean))
     : knownParts;
+
+  const applyQuoUnit = (idx)=>{
+    const u = customerUnits[Number(idx)];
+    if(!u) return;
+    if(quoFormat==="manual" && u.b) setQuoMerk(u.b);
+    setQuoModel(u.m);
+    setQuoSN(u.s);
+  };
 
   const applyQuoCustomer = (custId)=>{
     setQuoCustomerId(custId);
@@ -4288,6 +4306,15 @@ function MainApp({onDisconnect, binId}){
               <input type="text" ref={quoCustomerNameRef} value={quoCustomerName} onChange={e=>setQuoCustomerName(UC(e.target.value))} placeholder="mis. B00025-PT. Berkah Manis Makmur"
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); quoAddressRef.current && quoAddressRef.current.focus(); } }} />
             </div>
+            {customerUnits.length>0 && (
+              <div className="full">
+                <label>🚜 Pilih Unit Customer (opsional, auto-isi Merk/Model/SN)</label>
+                <select value="" onChange={e=>applyQuoUnit(e.target.value)}>
+                  <option value="">-- pilih unit ({customerUnits.length} unit tercatat) --</option>
+                  {customerUnits.map((u,i)=><option key={i} value={i}>{[u.b,u.m].filter(Boolean).join(" ")+" — SN "+(u.s||"(belum tercatat)")}</option>)}
+                </select>
+              </div>
+            )}
             <div className="full">
               <label>🏢 Alamat</label>
               <input type="text" ref={quoAddressRef} value={quoAddress} onChange={e=>setQuoAddress(e.target.value)} placeholder="Otomatis terisi kalau customer punya alamat tersimpan (dari upload PDF sebelumnya)"
