@@ -479,6 +479,54 @@ window.storage = {
 
 const {useState,useEffect,useMemo,useRef} = React;
 
+// ===== Template draft (kata-kata bisa diedit & disimpan) + email revisi ke Mas Alif =====
+const ALIF_TO = "parts.jktinv5@berca-mp.co.id";
+const ALIF_CC = ["sena.ajie@berca-mp.co.id","budi.johanes@berca-mp.co.id","ramdani@berca-mp.co.id","untung.ms@berca-mp.co.id","mohammad.muhlisin@berca-mp.co.id","depocilegon@berca-mp.co.id"];
+const fillTpl = (tpl, vars)=> String(tpl||"")
+  .replace(/\{\{\s*([A-Z0-9_]+)\s*\}\}/g, (m,k)=> (vars && vars[k]!=null) ? String(vars[k]) : "")
+  .replace(/[ \t]{2,}/g," ").replace(/[ \t]+\n/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
+const numID = n => (Math.round(Number(n)||0)).toLocaleString("id-ID");
+const pctID = x => String(Math.round((Number(x)||0)*100)/100).replace(".",",");
+const DISC_LIMITS = {MITSUBISHI:{promo:40,max:45}, NICHIYU:{promo:40,max:45}, LONKING:{promo:20,max:35}, BYD:{promo:20,max:25}, NOBLELIFT:{promo:20,max:25}};
+const brandFromModel = m => { const s=String(m||"").toUpperCase().replace(/\s+/g,""); if(/^(FD|FG)\d/.test(s)) return "MITSUBISHI"; if(/^(CDM|LG|ZL|CLG)/.test(s)) return "LONKING"; if(/^(FB|FBR|PLD)/.test(s)) return "NICHIYU"; if(/^CPD/.test(s)) return "BYD"; return ""; };
+const J = (arr)=> arr.join("\n");
+const DEFAULT_TEMPLATES = {
+  waQuo: J(["Selamat {{SAPA}},","{{PIC}}","{{CUSTOMER}}","","Berikut kami sampaikan Penawaran Harga {{UNIT_WA}} dengan nomor dokumen {{DOCNO}}.","","{{RINGKASAN}}","","Grand Total: {{GRAND_TOTAL}}","","{{CATATAN_SUPERSEDE}}","","{{INFO_STOK}}","","Dokumen penawaran resmi terlampir. Mohon infonya kalau ada yang ingin disesuaikan.","","Salam,","{{PENANDATANGAN}} - PT. Berca Mandiri Perkasa"]),
+  emailQuoSubject: "Penawaran Harga {{DOCNO}} - {{UNIT_LABEL}} - {{CUSTOMER}}",
+  emailQuo: J(["Dear {{PIC_FORMAL}},","","Sehubungan dengan kebutuhan Bapak/Ibu, bersama email ini kami dari PT. Berca Mandiri Perkasa menyampaikan penawaran harga resmi {{UNIT_EMAIL}}.","","(Rincian detail barang dan biaya dapat dilihat pada dokumen terlampir)","","No. Dokumen: {{DOCNO}}","Tanggal: {{TANGGAL}}","Total Penawaran: {{TOTAL}}","","{{CATATAN_SUPERSEDE}}","","{{INFO_STOK}}","","Penawaran ini berlaku selama 2 (dua) minggu sejak tanggal diterbitkan. Apabila ada pertanyaan lebih lanjut, silakan menghubungi kami.","","Hormat kami,","{{PENANDATANGAN}}","PT. Berca Mandiri Perkasa - Branch Cilegon"]),
+  fuWa: J(["Selamat {{SAPA}}, {{PIC}}","{{CUSTOMER}}","","Saya {{PENANDATANGAN}} dari PT. Berca Mandiri Perkasa. Mau menindaklanjuti penawaran yang sudah kami kirim:","- No. Penawaran: {{DOCNO}}","- Tanggal: {{TANGGAL}}","{{ITEM_LINE}}","- Total: {{TOTAL}}","","Bagaimana kabarnya? Apakah ada yang perlu kami sesuaikan (harga, stock, atau estimasi pengiriman)?","{{CATATAN_EXPIRED}}","Kalau sudah ada keputusan, kabari ya, kami siap bantu proses PO-nya. Kira-kira kapan kami bisa dapat kabarnya?","","Salam,","{{PENANDATANGAN}} - PT. Berca Mandiri Perkasa"]),
+  fuEmailSubject: "Follow Up Penawaran Harga No. {{DOCNO}} - {{CUSTOMER}}",
+  fuEmail: J(["Dear {{PIC_FORMAL}},","","Sehubungan dengan penawaran harga yang telah kami sampaikan pada tanggal {{TANGGAL}} (No. Dokumen: {{DOCNO}}, total {{TOTAL}}), kami ingin menanyakan perkembangannya. Apakah ada hal yang perlu kami sesuaikan, seperti harga, ketersediaan stock, atau estimasi pengiriman?","","{{CATATAN_EXPIRED_EMAIL}}","","Apabila sudah ada keputusan, kami siap membantu proses selanjutnya. Terimakasih atas perhatian dan kerja samanya.","","Hormat kami,","{{PENANDATANGAN}}","PT. Berca Mandiri Perkasa - Branch Cilegon"]),
+  alifDiscSubject: "Revisi Diskon {{DOCNO}} - {{CUSTOMER}}",
+  alifDisc: J(["Dear Mas Alif,","","Mohon dibantu proses rubah diskon untuk quotation {{DOCNO}} ({{CUSTOMER}}) menjadi {{DISKON}}%{{DISKON_LAMA_TXT}} ya Mas.","{{APPROVAL_LINE}}","","Total setelah diskon:","Total Value: {{TOTAL_VALUE}}","Disc {{DISKON}}%: {{DISC_AMT}}","PPN {{PPN_PCT}}%: {{PPN_AMT}}","Total Akhir: {{TOTAL_AKHIR}}","","Mohon bantuannya untuk update di AIS ya Mas.","{{LAMPIRAN}}","","Terimakasih,","{{PENANDATANGAN}}"]),
+  alifPriceSubject: "Revisi Unit Price {{DOCNO}} - {{CUSTOMER}}",
+  alifPrice: J(["Dear Mas Alif,","","Minta bantu revisi unit price PQ {{DOCNO}} ({{CUSTOMER}}).","{{APPROVAL_LINE}}","","Mohon ubah Unit Price menjadi:","","{{DAFTAR_PART}}","","{{PART_TETAP}}","","{{LAMPIRAN}}","","Terimakasih,","{{PENANDATANGAN}}"])
+};
+const niceCust = n => { const k=unitKey(n); const hit=SEED_CUSTOMERS.find(s=>unitKey(s)===k); return hit || String(n||"").replace(/^[A-Z]\d{3,6}\s*-\s*/i,"").trim(); };
+
+// Editor kata-kata template: buka, ubah, simpan (tersimpan di Cloud), atau kembalikan ke standar
+function TplEditor({label, value, defaultValue, placeholders, onSave, rows}){
+  const [open,setOpen] = useState(false);
+  const [text,setText] = useState(value);
+  useEffect(()=>{ setText(value); },[value]);
+  const changed = String(value).trim()!==String(defaultValue).trim();
+  return (
+    <div style={{marginTop:6,fontFamily:"var(--sans)"}}>
+      <button className="icon-btn" onClick={()=>setOpen(!open)}>{open ? "Tutup editor" : "Edit kata-kata: "+label}{changed && !open ? " (sudah diubah)" : ""}</button>
+      {open && (
+        <div style={{marginTop:6}}>
+          <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>Bagian otomatis ditulis dengan kode dalam kurung kurawal ganda. Kode yang tersedia: {placeholders}</div>
+          <textarea value={text} onChange={e=>setText(e.target.value)} rows={rows||12} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} />
+          <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}>
+            <button className="icon-btn" onClick={()=>onSave(String(text).trim()===String(defaultValue).trim() ? null : text)}>Simpan template</button>
+            <button className="icon-btn" onClick={()=>{ setText(defaultValue); onSave(null); }}>Kembalikan standar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Data unit per customer (dari file Customer). Hanya ada di kode, tidak ikut tersimpan ke Cloud.
 // Format: kunci nama customer (tanpa PT/CV dan kode) -> [[merk, model, serial number], ...]
 const UNIT_DIRECTORY = {"SANTOSA AGRINDO":[["MITSUBISHI","FD30PD-2FP30-PS/PS","CF14J15046"]],"SUMATRACO LANGGENG MAKMUR":[["LONKING","LG30DT",""],["LONKING","LG30GLT",""],["LONKING","CDM932NG",""]],"DEKADE PRIORITAS":[["LONKING","ZL50C","LSH050NCEMAA11786"],["LONKING","CDM 512B","LSL0512BHMA501836"],["LONKING","CDM6060","LSW0060DPN0009198"],["MITSUBISHI","FG30ND-3FP47-PS/PS","CF13F-48661"],["LONKING","CDM6225","LSW225EKEM0085518"]],"NIPPON SHOKUBAI INDONESIA":[["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84706"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71115"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71114"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71118"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71119"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84055"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84705"]],"PRATAMA MANDIRI MULYA":[["LONKING","LG876","LSH0876NCNAC10955"]],"INDOHARA CIKANDE":[["MITSUBISHI","FD30ND-2SP30-PS/PS","CF14E-19291"]],"BAHARI MAKMUR SEJATI":[["NICHIYU","FBRAW15-75C-600MCS","182ZR3074"],["MITSUBISHI","FD25NT-2SP40-PS/PS","CF18C-71278"]],"BERKAH MANIS MAKMUR":[["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40232"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40236"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40237"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40238"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40239"]],"BANTEN PUTRA JAYA MANDIRI":[["MITSUBISHI","FD30HS-3FP40-PS/PS","CF51-10032"]],"SELAGO MAKMUR PLANTATION":[["MITSUBISHI","FD50N-2SP50-SPED","CF28C-50155"]],"KARUNIA BERCA INDONESIA":[["MITSUBISHI","FD30NT-2SP30-PS/PS","CF14E-19224"]],"BUDI TEXINDO PRAKARSA":[["MITSUBISHI","FD30ND-2FP30-PS/PS","CF14E-19800"]],"YULIANA INTI PERSADA":[["LONKING","CDM307","LSL00307CNA882258"]],"JM MUTU UTAMA":[["MITSUBISHI","FD35ND-3FP43-PS/PS","CF14E-87304"]],"ARTHA JAYA MAS":[["MITSUBISHI","FD25NT-2SP30-PS/PS","CF18C-84238"]],"TIRTA BINTANG FORTUNA":[["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84597"]],"POLYPLAST DWIPUTRA PRATAMA":[["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84489"],["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84490"]],"AGATA MAS CIKUPA":[["MITSUBISHI","FD30ND-3FP47-PS/PS","CF14E-22099"]],"NURIT IRIYANTO":[["MITSUBISHI","FD30PD-2SP30-US/US","CF14J-15201"]],"BEREMPAT MAJU SEJAHTERA":[["MITSUBISHI","FD30PD-2SP40-PS/PS","CF14J-15269"]],"GALVINDO INTISELARAS":[["MITSUBISHI","FD35NT-2SP30-US/US","CF14E-87352"]],"GARI SETIAWAN MAKMUR":[["LONKING","CDM312","LSL00312CPA601350"]],"MEDIKARYA AMINAH UTAMA":[["BP","KTA19 G4/BP C550S","41355011"]],"PRATAMA WIDYA":[["BP","6LTAA8.9 G2/BP C275DS","93227339"]],"JAPFA COMFEED INDONESIA":[["MITSUBISHI","FD35ND-2SP50-PS/PS","CF14E-87222"]],"TRI SEKAWAN MAJU":[["BYD","CPD25","50001232813"]],"SATRIA PIRANTI PERKASA":[["MITSUBISHI","FD35ND-2SP50-UD/US","CF14E-87245"]],"CIPTAPAPERIA":[["LONKING","CDM833","LSH0833NHPAC07308"]],"SEIWA LOGISTICS INDONESIA":[["NICHIYU","FB15PN-80C 300SF","256F-01368"],["NICHIYU","FB15PN-80C 300SF","256F-01369"]],"NIKOMAS GEMILANG":[["NICHIYU","FBR20-75","186E00184"]],"SUMBER KARYA UTAMA":[["LONKING","CDM307","LSL00307CRA601963"]],"INTERCIPTA KIMIA PRATAMA":[["MITSUBISHI","FD25NT-2FP30-PS/PS","CF18C-83912"]],"INTI CELLULOSEUTAMA INDONESIA":[["MITSUBISHI","FD30ND-3FP43-PS/PS","CF14E-22015"]],"INFRA SOLUSI INDONESIA":[["NICHIYU","FB15-80 430M","256F-01159"]],"RANGKAS MULYA SENTOSA":[["NICHIYU","FB18-80 500","256F00895"],["NICHIYU","FB18-80 500","256F00424"]],"MUTIARA FORKLIFT":[["MITSUBISHI","FD30ND-3FP43-PS/PS","F14E-11859"]],"INDOCERA UTAMA PRECISI":[["MITSUBISHI","FD30PD-3FP47-PS/PS","CF14J16087"]],"SUMBER KABEL INDONESIA":[["NOBLELIFT","CPD25-AF1H","NL1202552485"]],"BICC BERCA CABLES":[["MITSUBISHI","FD50N-2SP40-SPED","CF28C51850"]],"BANDO INDONESIA":[["BYD","CPD30","50201253678"]],"KARSAVICTA SATYA":[["BYD","CPD25 4500M FFL","50001242398"]],"VISTA CHEM INDONESIA":[["BYD","CPD25 5000MM","50001251523"]],"ADYABOGA PRANATA INDUSTRIES":[["NICHIYU","PLD20S-N507",""]],"ALAMKACA PRABAWA INDONESIA":[["MITSUBISHI","FD35ND",""]],"NATURAL GLASS PRABAWA INDONESIA":[["MITSUBISHI","FD35ND",""]],"AGUNG ABADI SENTOSA":[["MITSUBISHI","FD30D",""]],"AMOCO MITSUI PTA INDONESIA":[["MITSUBISHI","FG30ND",""]],"ARAI RUBBER SEAL INDONESIA":[["MITSUBISHI","FD35ND",""]],"ANUGRAH MITRAMAS PRATAMA":[["MITSUBISHI","FD25ND",""]],"APIKAYU GLYCERIN REFINERY":[["LONKING","CLG816C","LGZ816CZJJZ"]],"ALVINDO MULTI SEJAHTERA":[["MITSUBISHI","FD30ND",""]],"AGUNG PELITA INDUSTRINDO":[["MITSUBISHI","FD30NT",""]]};
@@ -1180,6 +1228,7 @@ function MainApp({onDisconnect, binId}){
   const [quoCustPoNo,setQuoCustPoNo] = useState("BY VISIT");
   const [quoPrNo,setQuoPrNo] = useState("");
   const [quoDiscPct,setQuoDiscPct] = useState("0");
+  const [quoBaseDisc,setQuoBaseDisc] = useState(""); // diskon awal sesuai PDF AIS (untuk pembanding di draft email Mas Alif)
   const [quoPpnPct,setQuoPpnPct] = useState("11");
   const [quoPpnExclude,setQuoPpnExclude] = useState(false); // true = customer minta PPN tidak ditampilkan, ditulis "Exclude PPN"
   // AIS format: satu tabel line item
@@ -1397,6 +1446,7 @@ function MainApp({onDisconnect, binId}){
           try{ setPartCatalog(JSON.parse(cloudData["part_catalog"])); }catch(e3){}
         }
         if(cloudData["last_backup_at"]){ setLastBackupAt(cloudData["last_backup_at"]); }
+        if(cloudData["draft_templates_v1"]){ try{ setDraftTpl(JSON.parse(cloudData["draft_templates_v1"]) || {}); }catch(e4){} }
       }catch(e){
         setCustomers(SEED_CUSTOMERS.map((name,i)=>({id:"seed-"+i,name:name.toUpperCase(),pic:"",phone:"",active:true})));
       }
@@ -1610,6 +1660,15 @@ function MainApp({onDisconnect, binId}){
   const holidays = useMemo(()=>getHolidaysForYear(year),[year]);
 
   const activeCustomers = useMemo(()=>customers.filter(c=>c.active).sort((a,b)=>a.name.localeCompare(b.name)),[customers]);
+  const [draftTpl,setDraftTpl] = useState({});
+  const getTpl = (k)=> (draftTpl[k]!=null && String(draftTpl[k]).trim()!=="") ? draftTpl[k] : DEFAULT_TEMPLATES[k];
+  const saveTpl = async(k, text)=>{
+    const next = {...draftTpl};
+    if(text==null) delete next[k]; else next[k] = text;
+    setDraftTpl(next);
+    try{ await window.storage.set("draft_templates_v1", JSON.stringify(next)); setInfo(text==null ? "Template dikembalikan ke standar." : "Template disimpan. Berlaku untuk draft berikutnya."); }
+    catch(e){ setErr("Template gagal disimpan ke Cloud. Detail: "+(e && e.message ? e.message : String(e))); }
+  };
   const customerUnits = useMemo(()=>{
     const list = UNIT_DIRECTORY[unitKey(quoCustomerName)] || [];
     return list.map(u=>({b:u[0], m:u[1], s:u[2]}));
@@ -1891,6 +1950,7 @@ function MainApp({onDisconnect, binId}){
         if(R.guessedSN) setQuoSN(R.guessedSN);
         if(R.guessedDisc!=null){
           if(quoFormat==="ais") setQuoDiscPct(String(R.guessedDisc)); else setQuoManualDiscPct(String(R.guessedDisc));
+          setQuoBaseDisc(String(R.guessedDisc));
         }
         if(R.guessedPpn!=null){ setQuoPpnPct(String(R.guessedPpn)); setQuoPpnExclude(false); }
 
@@ -2589,7 +2649,7 @@ function MainApp({onDisconnect, binId}){
     format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
     customerName: UC(quoCustomerName.trim()), address: quoAddress.trim(), phone: quoPhone.trim(),
     attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
-    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), discPct: quoDiscPct, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
+    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), discPct: quoDiscPct, baseDiscPct: quoBaseDisc, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
     aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
     scopeOn: quoScopeOn, scopeAuto: quoScopeAuto, scopeText: quoScopeAuto?quoScopeAutoText:quoScopeText, scopeTitle: quoScopeTitle, termsAuto: quoTermsAuto, termsText: quoTermsAuto?quoTermsAutoText:quoTermsText,
     signerId: signers.activeId || null,
@@ -2642,7 +2702,7 @@ function MainApp({onDisconnect, binId}){
     setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||localISO());
     setQuoCustomerName(UC(q.customerName||"")); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
     setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"");
-    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoDiscPct(q.discPct||"0"); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
+    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoDiscPct(q.discPct||"0"); setQuoBaseDisc(q.baseDiscPct||""); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
     setQuoScopeOn(!!q.scopeOn); setQuoScopeAuto(q.scopeAuto!==false); setQuoScopeText(q.scopeText||""); setQuoScopeTitle(q.scopeTitle||"SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(q.termsAuto!==false); setQuoTermsText(q.termsText||"");
     setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -2656,7 +2716,7 @@ function MainApp({onDisconnect, binId}){
     setQuoEditingId(null);
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
     setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT"); setQuoPrNo("");
-    setQuoDiscPct("0"); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
+    setQuoDiscPct("0"); setQuoBaseDisc(""); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
     setQuoScopeAuto(true); setQuoScopeText(""); setQuoScopeTitle("SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(true); setQuoTermsText("");
     setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts([{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -2836,25 +2896,15 @@ function MainApp({onDisconnect, binId}){
     const sg = signerName || "M. Rizal Fauzi";
     const hh = new Date().getHours();
     const sapa = hh<11 ? "pagi" : (hh<15 ? "siang" : (hh<18 ? "sore" : "malam"));
-    const wa = "Selamat "+sapa+", "+pic+"\n"
-      + cust+"\n\n"
-      + "Saya "+sg+" dari PT. Berca Mandiri Perkasa. Mau menindaklanjuti penawaran yang sudah kami kirim:\n"
-      + "- No. Penawaran: "+(q.docNo||"-")+"\n"
-      + "- Tanggal: "+dateStr+"\n"
-      + (itemLine ? "- Item: "+itemLine+"\n" : "")
-      + "- Total: "+total+"\n\n"
-      + "Bagaimana kabarnya? Apakah ada yang perlu kami sesuaikan (harga, stock, atau estimasi pengiriman)?\n"
-      + (expired ? "Kalau masa berlaku penawaran sudah lewat, kami bisa update harga dan stock terbaru.\n" : "")
-      + "Kalau sudah ada keputusan, kabari ya, kami siap bantu proses PO-nya.\n\n"
-      + "Terima kasih.\n"
-      + "Salam,\n"+sg+" - PT. Berca Mandiri Perkasa";
-    const emailSubject = "Follow Up Penawaran Harga No. "+(q.docNo||"-")+" - "+cust;
-    const emailBody = "Kepada Yth.\n"+picFormal+"\n"+cust+"\n\n"
-      + "Dengan hormat,\n\n"
-      + "Sehubungan dengan penawaran harga yang telah kami sampaikan pada tanggal "+dateStr+" (No. Dokumen: "+(q.docNo||"-")+", total "+total+"), kami ingin menanyakan perkembangannya. Apakah ada hal yang perlu kami sesuaikan, seperti harga, ketersediaan stock, atau estimasi pengiriman?\n\n"
-      + (expired ? "Mengingat masa berlaku penawaran 2 (dua) minggu telah terlewati, kami dapat memperbarui harga dan ketersediaan stock apabila diperlukan.\n\n" : "")
-      + "Apabila sudah ada keputusan, kami siap membantu proses selanjutnya. Terima kasih atas perhatian dan kerja samanya.\n\n"
-      + "Hormat kami,\n"+sg+"\nPT. Berca Mandiri Perkasa - Branch Cilegon";
+    const fv = {
+      SAPA: sapa, PIC: pic, PIC_FORMAL: picFormal, CUSTOMER: cust, PENANDATANGAN: sg, DOCNO: q.docNo||"-", TANGGAL: dateStr, TOTAL: total,
+      ITEM_LINE: itemLine ? "- Item: "+itemLine : "",
+      CATATAN_EXPIRED: expired ? "Kalau masa berlaku penawaran sudah lewat, kami bisa update harga dan stock terbaru." : "",
+      CATATAN_EXPIRED_EMAIL: expired ? "Mengingat masa berlaku penawaran 2 (dua) minggu telah terlewati, kami dapat memperbarui harga dan ketersediaan stock apabila diperlukan." : ""
+    };
+    const wa = fillTpl(getTpl("fuWa"), fv);
+    const emailSubject = fillTpl(getTpl("fuEmailSubject"), fv);
+    const emailBody = fillTpl(getTpl("fuEmail"), fv);
     return {wa, emailSubject, emailBody};
   };
 
@@ -3073,35 +3123,86 @@ function MainApp({onDisconnect, binId}){
         + "- Service"+ppnTag+": "+formatRupiah(Math.round(quoManualCalc.service.total))+"\n\n";
     }
 
-    const wa = "Selamat "+greetingByHour()+",\n"
-      + picName+"\n"
-      + quoCustomerName+"\n\n"
-      + "Berikut kami sampaikan Penawaran Harga "+unitPhraseWa+"dengan nomor dokumen "+(quoDocNo||"-")+".\n\n"
-      + breakdownWa
-      + "Grand Total: "+formatRupiah(totalAll)+"\n\n"
-      + supWa
-      + stkWa
-      + "Dokumen penawaran resmi terlampir. Mohon infonya kalau ada yang ingin disesuaikan.\n\n"
-      + "Salam,\n"+(signerName||"M. Rizal Fauzi")+" - PT. Berca Mandiri Perkasa";
-
-    const emailSubject = "Penawaran Harga "+(quoDocNo||"")+" - "+subjectUnit+" - "+quoCustomerName;
-    const emailBody = "Kepada Yth.\n"
-      + picName+"\n"
-      + quoCustomerName+"\n\n"
-      + "Dengan hormat,\n\n"
-      + "Sehubungan dengan kebutuhan Bapak/Ibu, bersama email ini kami dari PT. Berca Mandiri Perkasa menyampaikan penawaran harga resmi "+unitPhraseEmail+".\n\n"
-      + "(Rincian detail barang dan biaya dapat dilihat pada dokumen terlampir)\n\n"
-      + "No. Dokumen: "+(quoDocNo||"-")+"\n"
-      + "Tanggal: "+dateStr+"\n"
-      + "Total Penawaran: "+formatRupiah(totalAll)+"\n\n"
-      + supEmail
-      + stkEmail
-      + "Penawaran ini berlaku selama 2 (dua) minggu sejak tanggal diterbitkan. Apabila ada pertanyaan lebih lanjut, silakan menghubungi kami.\n\n"
-      + "Hormat kami,\n"+(signerName||"M. Rizal Fauzi")+"\n"
-      + "PT. Berca Mandiri Perkasa - Branch Cilegon";
+    const picShort = picFromAttn(quoAttn);
+    const picFormalQ = picShort.replace(/^Pak /,"Bapak ").replace(/^Bu /,"Ibu ");
+    const vars = {
+      SAPA: greetingByHour(), PIC: picShort, PIC_FORMAL: picFormalQ, CUSTOMER: quoCustomerName, DOCNO: quoDocNo||"-", TANGGAL: dateStr,
+      UNIT_WA: hasUnitInfo ? "untuk unit "+unitLabel+(quoSN?" (SN: "+quoSN+")":"") : "",
+      UNIT_EMAIL: unitPhraseEmail, UNIT_LABEL: subjectUnit,
+      RINGKASAN: breakdownWa.trim(), GRAND_TOTAL: formatRupiah(totalAll), TOTAL: formatRupiah(totalAll),
+      CATATAN_SUPERSEDE: "", INFO_STOK: "", PENANDATANGAN: signerName||"M. Rizal Fauzi"
+    };
+    const wa = fillTpl(getTpl("waQuo"), {...vars, CATATAN_SUPERSEDE: supWa.trim(), INFO_STOK: stkWa.trim()});
+    const emailSubject = fillTpl(getTpl("emailQuoSubject"), vars);
+    const emailBody = fillTpl(getTpl("emailQuo"), {...vars, CATATAN_SUPERSEDE: supEmail.trim(), INFO_STOK: stkEmail.trim()});
 
     return { wa, emailSubject, emailBody };
-  },[quoFormat, quoAisCalc, quoManualCalc, quoAttn, quoCustomerName, quoMerk, quoModel, quoSN, quoDocNo, quoDocDate, signerName, quoPpnPct, quoPpnExclude]);
+  },[quoFormat, quoAisCalc, quoManualCalc, quoAttn, quoCustomerName, quoMerk, quoModel, quoSN, quoDocNo, quoDocDate, signerName, quoPpnPct, quoPpnExclude, draftTpl]);
+
+  // ===== Draft email ke Mas Alif: revisi diskon / unit price di AIS =====
+  const [alifModeSel,setAlifModeSel] = useState("auto"); // auto | disc | price
+  const [alifDiscOv,setAlifDiscOv] = useState("");
+  const [alifApprover,setAlifApprover] = useState("Mas Sena");
+  const [alifAttach,setAlifAttach] = useState(true);
+  const [alifIncludeOld,setAlifIncludeOld] = useState(true);
+  const [alifEligOv,setAlifEligOv] = useState({});
+  const alifDraft = useMemo(()=>{
+    const isAis = quoFormat==="ais";
+    const calcRows = isAis ? quoAisCalc.rows : quoManualCalc.spareParts.rows;
+    const globalDisc = Number(isAis ? quoDiscPct : quoManualDiscPct) || 0;
+    const ppnPct = isAis ? quoAisCalc.ppnPct : (quoPpnExclude ? 0 : (Number(quoPpnPct)||0));
+    const anyRowDisc = calcRows.some(r=>r.dPct>0);
+    const ovTxt = String(alifDiscOv).replace(",",".").trim();
+    const ov = (ovTxt!=="" && !isNaN(Number(ovTxt))) ? Math.min(100,Math.max(0,Number(ovTxt))) : null;
+    const discNew = ov!=null ? ov : globalDisc;
+    const rows = calcRows.filter(r=>String(r.desc||"").trim() && (Number(r.unitPrice)||0)>0).map(r=>{
+      const pn = String(r.desc).split(",")[0].trim();
+      const key = pn.toUpperCase();
+      const defElig = isAis ? String(r.agc||"24")==="24" : true;
+      const elig = (key in alifEligOv) ? alifEligOv[key] : defElig;
+      const list = Number(r.unitPrice)||0;
+      const effPct = !elig ? 0 : (ov!=null ? ov : (anyRowDisc ? r.dPct : globalDisc));
+      const net = Math.round(list*(1-effPct/100));
+      const rest = String(r.desc).split(",").slice(1).join(" ").trim();
+      return {pn, key, label: pn+(rest?" "+rest:""), elig, defElig, list, net, effPct, qty:Number(r.qty)||0};
+    });
+    const hasNonElig = rows.some(r=>!r.elig);
+    const mode = alifModeSel==="auto" ? ((anyRowDisc || hasNonElig) ? "price" : "disc") : alifModeSel;
+
+    const totalValue = calcRows.reduce((s,r)=>s+r.ext,0);
+    const discAmt = totalValue*discNew/100;
+    const afterDisc = totalValue-discAmt;
+    const ppnAmt = afterDisc*ppnPct/100;
+    const totalAkhir = afterDisc+ppnAmt;
+
+    const changed = rows.filter(r=>r.net!==r.list);
+    const same = rows.filter(r=>r.net===r.list);
+    const daftar = changed.map((r,i)=> (i+1)+". "+r.pn+" \u2192 "+(alifIncludeOld ? "dari "+numID(r.list)+" jadi "+numID(r.net) : numID(r.net))).join("\n");
+    const tetap = same.map(r=>"Part "+r.label+" biarkan tetap "+numID(r.list)+".").join("\n");
+
+    const approver = String(alifApprover).trim();
+    const baseNum = quoBaseDisc!=="" ? Number(quoBaseDisc) : null;
+    const vars = {
+      DOCNO: quoDocNo||"-", CUSTOMER: niceCust(quoCustomerName), DISKON: pctID(discNew),
+      DISKON_LAMA_TXT: (baseNum!=null && !isNaN(baseNum) && baseNum!==discNew) ? " (sebelumnya "+pctID(baseNum)+"%)" : "",
+      APPROVAL_LINE: approver ? "Sudah dapat approval dari "+approver+" untuk naikkan ke disc "+pctID(discNew)+"%." : "",
+      LAMPIRAN: alifAttach ? "Terlampir juga Screen Approval." : "",
+      TOTAL_VALUE: formatRupiah(Math.round(totalValue)), DISC_AMT: formatRupiah(Math.round(discAmt)),
+      PPN_PCT: pctID(ppnPct), PPN_AMT: formatRupiah(Math.round(ppnAmt)), TOTAL_AKHIR: formatRupiah(Math.round(totalAkhir)),
+      DAFTAR_PART: daftar, PART_TETAP: tetap, PENANDATANGAN: signerName||"M. Rizal Fauzi"
+    };
+    const subject = fillTpl(getTpl(mode==="disc" ? "alifDiscSubject" : "alifPriceSubject"), vars);
+    const body = fillTpl(getTpl(mode==="disc" ? "alifDisc" : "alifPrice"), vars);
+    const brand = (quoMerk||"").toUpperCase().trim() || brandFromModel(quoModel);
+    const lim = DISC_LIMITS[brand];
+    let limitMsg = "";
+    if(lim){
+      if(discNew>lim.max) limitMsg = "Diskon "+pctID(discNew)+"% melebihi batas maksimal "+lim.max+"% untuk "+brand+" (Monthly Report Agustus 2026), kemungkinan besar ditolak.";
+      else if(discNew>lim.promo) limitMsg = "Diskon "+pctID(discNew)+"% di atas diskon promo "+lim.promo+"% (batas Parts OH "+lim.max+"% untuk "+brand+"), pastikan approval Mas Sena sudah ada.";
+    }
+    const mailto = "mailto:"+ALIF_TO+"?cc="+encodeURIComponent(ALIF_CC.join(","))+"&subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+    return {mode, autoPicked: alifModeSel==="auto", rows, anyRowDisc, hasNonElig, discNew, subject, body, limitMsg, mailto};
+  },[quoFormat, quoAisCalc, quoManualCalc, quoDiscPct, quoManualDiscPct, quoPpnPct, quoPpnExclude, quoDocNo, quoCustomerName, quoBaseDisc, quoMerk, quoModel, signerName, alifModeSel, alifDiscOv, alifApprover, alifAttach, alifIncludeOld, alifEligOv, draftTpl]);
 
   const [copyFeedback,setCopyFeedback] = useState("");
   const copyToClipboard = (text, label)=>{
@@ -4311,7 +4412,7 @@ function MainApp({onDisconnect, binId}){
                 <label>🚜 Pilih Unit Customer (opsional, auto-isi Merk/Model/SN)</label>
                 <select value="" onChange={e=>applyQuoUnit(e.target.value)}>
                   <option value="">-- pilih unit ({customerUnits.length} unit tercatat) --</option>
-                  {customerUnits.map((u,i)=><option key={i} value={i}>{[u.b,u.m].filter(Boolean).join(" ")+" — SN "+(u.s||"(belum tercatat)")}</option>)}
+                  {customerUnits.map((u,i)=><option key={i} value={i}>{[u.b,u.m].filter(Boolean).join(" ")+" | SN "+(u.s||"(belum tercatat)")}</option>)}
                 </select>
               </div>
             )}
@@ -4511,7 +4612,11 @@ function MainApp({onDisconnect, binId}){
           )}
 
           <div className="no-print" style={{marginBottom:20}}>
-            <h2 className="section" style={{marginBottom:10}}>Draft Pesan (Siap Copy-Paste)</h2>
+            <details>
+            <summary style={{cursor:"pointer",listStyle:"revert",marginBottom:10}}>
+              <h2 className="section" style={{display:"inline-block",margin:0}}>Draft Pesan (Siap Copy-Paste)</h2>
+              <span style={{fontSize:11.5,color:"var(--muted)",marginLeft:8}}>WA dan email penawaran (klik untuk buka/tutup)</span>
+            </summary>
             {copyFeedback && <div style={{color:"var(--green)",fontWeight:700,fontSize:12,marginBottom:8}}>{copyFeedback}</div>}
 
             <div style={{marginBottom:16}}>
@@ -4520,6 +4625,7 @@ function MainApp({onDisconnect, binId}){
                 <button className="icon-btn" onClick={()=>copyToClipboard(draftTexts.wa, "Draft WA")}>Copy Draft WA</button>
               </div>
               <textarea readOnly value={draftTexts.wa} rows={10} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"var(--paper-raise)"}} onFocus={e=>e.target.select()} />
+              <TplEditor label="WhatsApp penawaran" value={getTpl("waQuo")} defaultValue={DEFAULT_TEMPLATES.waQuo} placeholders="{{SAPA}} {{PIC}} {{CUSTOMER}} {{UNIT_WA}} {{DOCNO}} {{RINGKASAN}} {{GRAND_TOTAL}} {{CATATAN_SUPERSEDE}} {{INFO_STOK}} {{PENANDATANGAN}}" onSave={t=>saveTpl("waQuo",t)} />
             </div>
 
             <div>
@@ -4529,8 +4635,82 @@ function MainApp({onDisconnect, binId}){
               </div>
               <div style={{fontFamily:"var(--sans)",fontSize:11.5,fontWeight:700,marginBottom:4}}>Subject: {draftTexts.emailSubject}</div>
               <textarea readOnly value={draftTexts.emailBody} rows={12} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"var(--paper-raise)"}} onFocus={e=>e.target.select()} />
+              <TplEditor label="subjek email penawaran" rows={2} value={getTpl("emailQuoSubject")} defaultValue={DEFAULT_TEMPLATES.emailQuoSubject} placeholders="{{DOCNO}} {{UNIT_LABEL}} {{CUSTOMER}}" onSave={t=>saveTpl("emailQuoSubject",t)} />
+              <TplEditor label="isi email penawaran" value={getTpl("emailQuo")} defaultValue={DEFAULT_TEMPLATES.emailQuo} placeholders="{{PIC_FORMAL}} {{PIC}} {{CUSTOMER}} {{UNIT_EMAIL}} {{DOCNO}} {{TANGGAL}} {{TOTAL}} {{CATATAN_SUPERSEDE}} {{INFO_STOK}} {{PENANDATANGAN}}" onSave={t=>saveTpl("emailQuo",t)} />
             </div>
+            </details>
           </div>
+
+          {(alifDraft.rows.length>0 || (quoDocNo||"").trim()) && (
+            <div className="no-print" style={{border:"2.5px solid var(--ink)",background:"var(--paper-raise)",padding:"12px 14px",marginBottom:16,fontFamily:"var(--sans)"}}>
+              <details>
+              <summary style={{cursor:"pointer",listStyle:"revert"}}>
+                <h2 className="section" style={{display:"inline-block",margin:0}}>Draft Email ke Mas Alif (Revisi Diskon / Unit Price di AIS)</h2>
+                <span style={{fontSize:11.5,color:"var(--muted)",marginLeft:8}}>{alifDraft.mode==="disc" ? "Rubah Disc%" : "Rubah Unit Price"}, diskon {pctID(alifDraft.discNew)}% (klik untuk buka/tutup)</span>
+              </summary>
+              <div style={{marginTop:8}}></div>
+              <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>Pakai ini setelah diskon atau harga di VCS diubah dan perlu disamakan di AIS. Harga lama adalah harga satuan sebelum diskon pada penawaran ini. Penerima dan Cc sudah terisi.</div>
+
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
+                <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,color:"var(--muted)"}}>Metode</span>
+                {[["auto","Otomatis"],["disc","Rubah Disc%"],["price","Rubah Unit Price"]].map(([v,l])=>(
+                  <button key={v} className="icon-btn" onClick={()=>setAlifModeSel(v)} style={alifModeSel===v ? {background:"var(--ink)",color:"#fff"} : undefined}>{l}</button>
+                ))}
+                <span style={{fontSize:11.5}}>Dipakai sekarang: <b>{alifDraft.mode==="disc" ? "Rubah Disc%" : "Rubah Unit Price"}</b>{alifDraft.autoPicked && alifDraft.mode==="price" && alifDraft.anyRowDisc ? " (ada diskon per part)" : ""}{alifDraft.autoPicked && alifDraft.mode==="price" && !alifDraft.anyRowDisc && alifDraft.hasNonElig ? " (ada part yang tidak ikut diskon)" : ""}</span>
+              </div>
+
+              <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:8,alignItems:"flex-end"}}>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700}}>Diskon baru (%)</label>
+                  <input type="text" value={alifDiscOv} onChange={e=>setAlifDiscOv(e.target.value)} placeholder={"kosong = ikut VCS ("+pctID(alifDraft.discNew)+")"} style={{maxWidth:190}} />
+                </div>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700}}>Approval dari</label>
+                  <input type="text" value={alifApprover} onChange={e=>setAlifApprover(e.target.value)} placeholder="kosongkan kalau tidak perlu" style={{maxWidth:190}} />
+                </div>
+                <label style={{fontSize:12,display:"flex",gap:5,alignItems:"center"}}><input type="checkbox" checked={alifIncludeOld} onChange={e=>setAlifIncludeOld(e.target.checked)} /> Sertakan harga lama</label>
+                <label style={{fontSize:12,display:"flex",gap:5,alignItems:"center"}}><input type="checkbox" checked={alifAttach} onChange={e=>setAlifAttach(e.target.checked)} /> Terlampir screen approval</label>
+              </div>
+
+              {alifDraft.limitMsg && <div style={{color:"var(--red)",fontWeight:700,fontSize:12,marginBottom:8}}>{alifDraft.limitMsg}</div>}
+              {alifDraft.mode==="disc" && alifDraft.anyRowDisc && <div style={{color:"var(--red)",fontWeight:700,fontSize:12,marginBottom:8}}>Ada diskon per part di penawaran ini. Metode Rubah Disc% hanya cocok untuk diskon keseluruhan, pakai Rubah Unit Price.</div>}
+
+              {alifDraft.rows.length>0 && (
+                <div style={{overflowX:"auto",marginBottom:8}}>
+                  <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+                    <thead><tr><th style={{textAlign:"left"}}>Ikut diskon</th><th style={{textAlign:"left"}}>No. Part</th><th style={{textAlign:"right"}}>Harga lama</th><th style={{textAlign:"right"}}>Disc</th><th style={{textAlign:"right"}}>Harga baru</th></tr></thead>
+                    <tbody>
+                      {alifDraft.rows.map(r=>(
+                        <tr key={r.key} style={{borderTop:"1.5px solid var(--line)"}}>
+                          <td><input type="checkbox" checked={r.elig} onChange={e=>setAlifEligOv({...alifEligOv, [r.key]: e.target.checked})} /></td>
+                          <td>{r.pn}</td>
+                          <td style={{textAlign:"right"}}>{numID(r.list)}</td>
+                          <td style={{textAlign:"right"}}>{r.elig ? pctID(r.effPct)+"%" : "tetap"}</td>
+                          <td style={{textAlign:"right",fontWeight:700}}>{numID(r.net)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Diskon khusus hanya untuk part genuine (AGC 24). Part consumable atau AGC 87/88 otomatis tidak dicentang dan ditulis "biarkan tetap".</div>
+                </div>
+              )}
+
+              <div style={{fontSize:12,marginBottom:4}}><b>Kepada:</b> {ALIF_TO}</div>
+              <div style={{fontSize:12,marginBottom:6,wordBreak:"break-all"}}><b>Cc:</b> {ALIF_CC.join(", ")}</div>
+              <div style={{fontSize:11.5,fontWeight:700,marginBottom:4}}>Subject: {alifDraft.subject}</div>
+              <textarea readOnly value={alifDraft.body} rows={16} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} onFocus={e=>e.target.select()} />
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                <button className="icon-btn" onClick={()=>copyToClipboard("Subject: "+alifDraft.subject+"\n\n"+alifDraft.body, "Draft email Mas Alif")}>Copy Draft Email</button>
+                <button className="icon-btn" onClick={()=>copyToClipboard(ALIF_CC.join("; "), "Daftar Cc")}>Copy Cc</button>
+                <a className="icon-btn" href={alifDraft.mailto} style={{textDecoration:"none"}}>Buka di aplikasi email</a>
+              </div>
+              {copyFeedback && <div style={{color:"var(--green)",fontWeight:700,fontSize:12,marginTop:6}}>{copyFeedback}</div>}
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Kalau tombol buka email memotong isi yang panjang, pakai Copy Draft Email lalu tempel manual. Jangan lupa lampirkan screenshot approval.</div>
+              <TplEditor label="subjek email Mas Alif" rows={2} value={getTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject"]} placeholders="{{DOCNO}} {{CUSTOMER}} {{DISKON}}" onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject", t)} />
+              <TplEditor label={alifDraft.mode==="disc" ? "isi email Mas Alif (rubah Disc%)" : "isi email Mas Alif (rubah Unit Price)"} value={getTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDisc" : "alifPrice"]} placeholders={alifDraft.mode==="disc" ? "{{DOCNO}} {{CUSTOMER}} {{DISKON}} {{DISKON_LAMA_TXT}} {{APPROVAL_LINE}} {{TOTAL_VALUE}} {{DISC_AMT}} {{PPN_PCT}} {{PPN_AMT}} {{TOTAL_AKHIR}} {{LAMPIRAN}} {{PENANDATANGAN}}" : "{{DOCNO}} {{CUSTOMER}} {{DISKON}} {{APPROVAL_LINE}} {{DAFTAR_PART}} {{PART_TETAP}} {{LAMPIRAN}} {{PENANDATANGAN}}"} onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice", t)} />
+              </details>
+            </div>
+          )}
 
           {fuList.length>0 && (
             <div className="no-print" style={{border:"2.5px solid var(--ink)",borderLeft:"9px solid var(--yellow)",background:"#FFF3D6",padding:"12px 14px",marginBottom:16,fontFamily:"var(--sans)"}}>
@@ -4577,6 +4757,7 @@ function MainApp({onDisconnect, binId}){
                   <button className="icon-btn" onClick={()=>copyToClipboard(fuDraft.wa, "Draft FU WA")}>Copy Draft WA</button>
                 </div>
                 <textarea readOnly value={fuDraft.wa} rows={13} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} onFocus={e=>e.target.select()} />
+                <TplEditor label="WhatsApp follow up" value={getTpl("fuWa")} defaultValue={DEFAULT_TEMPLATES.fuWa} placeholders="{{SAPA}} {{PIC}} {{CUSTOMER}} {{PENANDATANGAN}} {{DOCNO}} {{TANGGAL}} {{ITEM_LINE}} {{TOTAL}} {{CATATAN_EXPIRED}}" onSave={t=>saveTpl("fuWa",t)} />
               </div>
               <div style={{marginBottom:12}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
@@ -4585,6 +4766,8 @@ function MainApp({onDisconnect, binId}){
                 </div>
                 <div style={{fontSize:11.5,fontWeight:700,marginBottom:4}}>Subject: {fuDraft.emailSubject}</div>
                 <textarea readOnly value={fuDraft.emailBody} rows={12} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} onFocus={e=>e.target.select()} />
+                <TplEditor label="subjek email follow up" rows={2} value={getTpl("fuEmailSubject")} defaultValue={DEFAULT_TEMPLATES.fuEmailSubject} placeholders="{{DOCNO}} {{CUSTOMER}}" onSave={t=>saveTpl("fuEmailSubject",t)} />
+                <TplEditor label="isi email follow up" value={getTpl("fuEmail")} defaultValue={DEFAULT_TEMPLATES.fuEmail} placeholders="{{PIC_FORMAL}} {{CUSTOMER}} {{TANGGAL}} {{DOCNO}} {{TOTAL}} {{CATATAN_EXPIRED_EMAIL}} {{PENANDATANGAN}}" onSave={t=>saveTpl("fuEmail",t)} />
               </div>
               <button className="icon-btn" onClick={()=>{ markFollowedUp(fuDraftQ); setFuDraftId(null); }}>Sudah dikirim: tandai sudah FU</button>
             </div>
