@@ -498,9 +498,19 @@ const DEFAULT_TEMPLATES = {
   fuEmailSubject: "Follow Up Penawaran Harga No. {{DOCNO}} - {{CUSTOMER}}",
   fuEmail: J(["Dear {{PIC_FORMAL}},","","Sehubungan dengan penawaran harga yang telah kami sampaikan pada tanggal {{TANGGAL}} (No. Dokumen: {{DOCNO}}, total {{TOTAL}}), kami ingin menanyakan perkembangannya. Apakah ada hal yang perlu kami sesuaikan, seperti harga, ketersediaan stock, atau estimasi pengiriman?","","{{CATATAN_EXPIRED_EMAIL}}","","Apabila sudah ada keputusan, kami siap membantu proses selanjutnya. Terimakasih atas perhatian dan kerja samanya.","","Hormat kami,","{{PENANDATANGAN}}","PT. Berca Mandiri Perkasa - Branch Cilegon"]),
   alifDiscSubject: "Revisi Diskon {{DOCNO}} - {{CUSTOMER}}",
-  alifDisc: J(["Dear Mas Alif,","","Mohon dibantu proses rubah diskon untuk quotation {{DOCNO}} ({{CUSTOMER}}) menjadi {{DISKON}}%{{DISKON_LAMA_TXT}} ya Mas.","{{APPROVAL_LINE}}","","Total setelah diskon:","Total Value: {{TOTAL_VALUE}}","Disc {{DISKON}}%: {{DISC_AMT}}","PPN {{PPN_PCT}}%: {{PPN_AMT}}","Total Akhir: {{TOTAL_AKHIR}}","","Mohon bantuannya untuk update di AIS ya Mas.","{{LAMPIRAN}}","","Terimakasih,","{{PENANDATANGAN}}"]),
+  alifDisc: J(["Dear {{NAMA_PENERIMA}},","","Mohon dibantu proses rubah diskon untuk quotation {{DOCNO}} ({{CUSTOMER}}) menjadi {{DISKON}}%{{DISKON_LAMA_TXT}} ya{{PANGGILAN}}.","{{APPROVAL_LINE}}","","Total setelah diskon:","Total Value: {{TOTAL_VALUE}}","Disc {{DISKON}}%: {{DISC_AMT}}","PPN {{PPN_PCT}}%: {{PPN_AMT}}","Total Akhir: {{TOTAL_AKHIR}}","","Mohon bantuannya untuk update di AIS ya{{PANGGILAN}}.","{{LAMPIRAN}}","","Terimakasih,","{{PENANDATANGAN}}"]),
   alifPriceSubject: "Revisi Unit Price {{DOCNO}} - {{CUSTOMER}}",
-  alifPrice: J(["Dear Mas Alif,","","Minta bantu revisi unit price PQ {{DOCNO}} ({{CUSTOMER}}).","{{APPROVAL_LINE}}","","Mohon ubah Unit Price menjadi:","","{{DAFTAR_PART}}","","{{PART_TETAP}}","","{{LAMPIRAN}}","","Terimakasih,","{{PENANDATANGAN}}"])
+  alifPrice: J(["Dear {{NAMA_PENERIMA}},","","Minta bantu revisi unit price PQ {{DOCNO}} ({{CUSTOMER}}).","{{APPROVAL_LINE}}","","Mohon ubah Unit Price menjadi:","","{{DAFTAR_PART}}","","{{PART_TETAP}}","","{{LAMPIRAN}}","","Terimakasih,","{{PENANDATANGAN}}"])
+};
+const aisRevStatus = (rev)=>{
+  if(!rev) return null;
+  const items = rev.items||[]; const n = items.length; const d = items.filter(i=>i.done).length;
+  const hasTotal = String(rev.aisTotal||"")!=="";
+  const diff = hasTotal ? Number(rev.aisTotal)-Number(rev.expectedTotal||0) : 0;
+  const totalOk = hasTotal && Math.abs(diff)<=5;
+  const done = n>0 && d===n && totalOk;
+  const label = done ? "Selesai, semua cocok" : ((d===0 && !hasTotal) ? "Menunggu AIS" : "Sebagian ("+d+"/"+n+" item"+(hasTotal ? (totalOk?", total cocok":", total belum cocok") : ", total belum dicek")+")");
+  return {n,d,hasTotal,diff,totalOk,done,label};
 };
 const niceCust = n => { const k=unitKey(n); const hit=SEED_CUSTOMERS.find(s=>unitKey(s)===k); return hit || String(n||"").replace(/^[A-Z]\d{3,6}\s*-\s*/i,"").trim(); };
 
@@ -1465,6 +1475,7 @@ function MainApp({onDisconnect, binId}){
         }
         if(cloudData["last_backup_at"]){ setLastBackupAt(cloudData["last_backup_at"]); }
         if(cloudData["draft_templates_v1"]){ try{ setDraftTpl(JSON.parse(cloudData["draft_templates_v1"]) || {}); }catch(e4){} }
+        if(cloudData["ais_contact_v1"]){ try{ const ac = JSON.parse(cloudData["ais_contact_v1"]); if(ac && ac.name) setAisContact({name:ac.name, email:ac.email||ALIF_TO, cc:ac.cc!=null?ac.cc:ALIF_CC.join(", ")}); }catch(e5){} }
       }catch(e){
         setCustomers(SEED_CUSTOMERS.map((name,i)=>({id:"seed-"+i,name:name.toUpperCase(),pic:"",phone:"",active:true})));
       }
@@ -2667,7 +2678,7 @@ function MainApp({onDisconnect, binId}){
     format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
     customerName: UC(quoCustomerName.trim()), address: quoAddress.trim(), phone: quoPhone.trim(),
     attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
-    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), discPct: quoDiscPct, baseDiscPct: quoBaseDisc, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
+    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), aisRev: quoAisRev || undefined, discPct: quoDiscPct, baseDiscPct: quoBaseDisc, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude,
     aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
     scopeOn: quoScopeOn, scopeAuto: quoScopeAuto, scopeText: quoScopeAuto?quoScopeAutoText:quoScopeText, scopeTitle: quoScopeTitle, termsAuto: quoTermsAuto, termsText: quoTermsAuto?quoTermsAutoText:quoTermsText,
     signerId: signers.activeId || null,
@@ -2720,7 +2731,7 @@ function MainApp({onDisconnect, binId}){
     setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||localISO());
     setQuoCustomerName(UC(q.customerName||"")); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
     setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"");
-    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoDiscPct(q.discPct||"0"); setQuoBaseDisc(q.baseDiscPct||""); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
+    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoAisRev(q.aisRev||null); setQuoDiscPct(q.discPct||"0"); setQuoBaseDisc(q.baseDiscPct||""); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude);
     setQuoScopeOn(!!q.scopeOn); setQuoScopeAuto(q.scopeAuto!==false); setQuoScopeText(q.scopeText||""); setQuoScopeTitle(q.scopeTitle||"SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(q.termsAuto!==false); setQuoTermsText(q.termsText||"");
     setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -2734,7 +2745,7 @@ function MainApp({onDisconnect, binId}){
     setQuoEditingId(null);
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
     setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT"); setQuoPrNo("");
-    setQuoDiscPct("0"); setQuoBaseDisc(""); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
+    setQuoAisRev(null); setQuoDiscPct("0"); setQuoBaseDisc(""); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false);
     setQuoScopeAuto(true); setQuoScopeText(""); setQuoScopeTitle("SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(true); setQuoTermsText("");
     setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts([{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -3164,6 +3175,12 @@ function MainApp({onDisconnect, binId}){
   const [alifAttach,setAlifAttach] = useState(true);
   const [alifIncludeOld,setAlifIncludeOld] = useState(true);
   const [alifEligOv,setAlifEligOv] = useState({});
+  const [aisContact,setAisContact] = useState({name:"Mas Alif", email:ALIF_TO, cc:ALIF_CC.join(", ")});
+  const saveAisContact = async()=>{
+    try{ await window.storage.set("ais_contact_v1", JSON.stringify(aisContact)); setInfo("Penerima email revisi AIS disimpan."); }
+    catch(e){ setErr("Penerima gagal disimpan ke Cloud. Detail: "+(e && e.message ? e.message : String(e))); }
+  };
+  const [quoAisRev,setQuoAisRev] = useState(null); // log revisi AIS untuk penawaran ini
   const alifDraft = useMemo(()=>{
     const isAis = quoFormat==="ais";
     const calcRows = isAis ? quoAisCalc.rows : quoManualCalc.spareParts.rows;
@@ -3200,7 +3217,16 @@ function MainApp({onDisconnect, binId}){
 
     const approver = String(alifApprover).trim();
     const baseNum = quoBaseDisc!=="" ? Number(quoBaseDisc) : null;
+    const subPrice = rows.reduce((t,r)=>t+r.net*r.qty,0);
+    const subDisc = rows.reduce((t,r)=>t+r.list*r.qty,0)*(1-discNew/100);
+    const expSub = mode==="price" ? subPrice : subDisc;
+    const expectedTotal = expSub + expSub*ppnPct/100;
+    const toName = String(aisContact.name||"").trim();
+    const firstW = toName.split(/\s+/)[0] || "";
+    const panggilan = /^(Mas|Mba|Mbak|Pak|Bu|Bapak|Ibu|Bang|Kak)$/i.test(firstW) ? " "+firstW : "";
+    const ccList = String(aisContact.cc||"").split(/[;,\s]+/).filter(Boolean);
     const vars = {
+      NAMA_PENERIMA: toName || "Bapak/Ibu", PANGGILAN: panggilan,
       DOCNO: quoDocNo||"-", CUSTOMER: niceCust(quoCustomerName), DISKON: pctID(discNew),
       DISKON_LAMA_TXT: (baseNum!=null && !isNaN(baseNum) && baseNum!==discNew) ? " (sebelumnya "+pctID(baseNum)+"%)" : "",
       APPROVAL_LINE: approver ? "Sudah dapat approval dari "+approver+" untuk naikkan ke disc "+pctID(discNew)+"%." : "",
@@ -3218,9 +3244,30 @@ function MainApp({onDisconnect, binId}){
       if(discNew>lim.max) limitMsg = "Diskon "+pctID(discNew)+"% melebihi batas maksimal "+lim.max+"% untuk "+brand+" (Monthly Report Agustus 2026), kemungkinan besar ditolak.";
       else if(discNew>lim.promo) limitMsg = "Diskon "+pctID(discNew)+"% di atas diskon promo "+lim.promo+"% (batas Parts OH "+lim.max+"% untuk "+brand+"), pastikan approval Mas Sena sudah ada.";
     }
-    const mailto = "mailto:"+ALIF_TO+"?cc="+encodeURIComponent(ALIF_CC.join(","))+"&subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
-    return {mode, autoPicked: alifModeSel==="auto", rows, anyRowDisc, hasNonElig, discNew, subject, body, limitMsg, mailto};
-  },[quoFormat, quoAisCalc, quoManualCalc, quoDiscPct, quoManualDiscPct, quoPpnPct, quoPpnExclude, quoDocNo, quoCustomerName, quoBaseDisc, quoMerk, quoModel, signerName, alifModeSel, alifDiscOv, alifApprover, alifAttach, alifIncludeOld, alifEligOv, draftTpl]);
+    const mailto = "mailto:"+String(aisContact.email||"").trim()+"?cc="+encodeURIComponent(ccList.join(","))+"&subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+    return {mode, autoPicked: alifModeSel==="auto", rows, anyRowDisc, hasNonElig, discNew, subject, body, limitMsg, mailto, expectedTotal, ccList, toEmail:String(aisContact.email||"").trim()};
+  },[quoFormat, quoAisCalc, quoManualCalc, quoDiscPct, quoManualDiscPct, quoPpnPct, quoPpnExclude, quoDocNo, quoCustomerName, quoBaseDisc, quoMerk, quoModel, signerName, alifModeSel, alifDiscOv, alifApprover, alifAttach, alifIncludeOld, alifEligOv, draftTpl, aisContact]);
+
+  // ===== Checklist konfirmasi AIS =====
+  const persistAisRev = async(next)=>{
+    if(!quoEditingId) return;
+    const base = findQuotationById(quoEditingId);
+    if(base) await persistQuotationToItsQuarter({...base, aisRev: next}, base.docDate);
+  };
+  const setAndPersistAisRev = (next)=>{ setQuoAisRev(next); persistAisRev(next); };
+  const markAisRevSent = ()=>{
+    if(!quoEditingId){ setErr("Simpan penawaran dulu (tombol Simpan Penawaran), baru email revisi AIS bisa ditandai terkirim."); return; }
+    if(alifDraft.rows.length===0){ setErr("Belum ada part di penawaran ini."); return; }
+    const items = alifDraft.mode==="disc"
+      ? [{label:"Disc% di AIS menjadi "+pctID(alifDraft.discNew)+"%", requested:true, done:false}]
+      : alifDraft.rows.map(r=>({label:r.label, from:r.list, to:r.net, requested:r.net!==r.list, done:false}));
+    setErr("");
+    setAndPersistAisRev({sentAt:new Date().toISOString(), to:aisContact.name||"", mode:alifDraft.mode, disc:alifDraft.discNew, items, expectedTotal:Math.round(alifDraft.expectedTotal), aisTotal:""});
+    setInfo("Email revisi AIS ditandai terkirim. Centang tiap item setelah AIS diubah dan cocok.");
+  };
+  const toggleAisRevItem = (i, v)=>{ if(!quoAisRev) return; setAndPersistAisRev({...quoAisRev, items: quoAisRev.items.map((it,k)=> k===i ? {...it, done:v} : it)}); };
+  const checkAllAisRev = ()=>{ if(!quoAisRev) return; setAndPersistAisRev({...quoAisRev, items: quoAisRev.items.map(it=>({...it, done:true}))}); };
+  const resetAisRev = ()=>{ if(!window.confirm("Hapus catatan checklist revisi AIS untuk penawaran ini?")) return; setAndPersistAisRev(null); };
 
   const [copyFeedback,setCopyFeedback] = useState("");
   const copyToClipboard = (text, label)=>{
@@ -4657,7 +4704,7 @@ function MainApp({onDisconnect, binId}){
 
           {(
             <div className="no-print" style={{border:"2.5px solid var(--ink)",background:"var(--paper-raise)",padding:"12px 14px",marginBottom:16,fontFamily:"var(--sans)"}}>
-              <Panel id="alif" title="Draft Email ke Mas Alif (Revisi Diskon / Unit Price di AIS)" hint={(alifDraft.mode==="disc" ? "Rubah Disc%" : "Rubah Unit Price")+", diskon "+pctID(alifDraft.discNew)+"% (klik untuk buka/tutup)"}>
+              <Panel id="alif" title="Draft Revisi Diskon / Unit Price di AIS" hint={(alifDraft.mode==="disc" ? "Rubah Disc%" : "Rubah Unit Price")+", diskon "+pctID(alifDraft.discNew)+"%"+(quoAisRev ? " | "+aisRevStatus(quoAisRev).label : "")+" (klik untuk buka/tutup)"}>
               <div style={{marginTop:8}}></div>
               {alifDraft.rows.length===0 && <div style={{color:"var(--red)",fontWeight:700,fontSize:12,marginBottom:8}}>Belum ada part di form. Klik Edit pada penawaran di Riwayat Penawaran, atau isi rincian part dulu, baru draft email terisi.</div>}
               <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>Pakai ini setelah diskon atau harga di VCS diubah dan perlu disamakan di AIS. Harga lama adalah harga satuan sebelum diskon pada penawaran ini. Penerima dan Cc sudah terisi.</div>
@@ -4706,19 +4753,76 @@ function MainApp({onDisconnect, binId}){
                 </div>
               )}
 
-              <div style={{fontSize:12,marginBottom:4}}><b>Kepada:</b> {ALIF_TO}</div>
-              <div style={{fontSize:12,marginBottom:6,wordBreak:"break-all"}}><b>Cc:</b> {ALIF_CC.join(", ")}</div>
+              <div style={{fontSize:12,marginBottom:4}}><b>Kepada:</b> {aisContact.name} ({alifDraft.toEmail})</div>
+              <div style={{fontSize:12,marginBottom:4,wordBreak:"break-all"}}><b>Cc:</b> {alifDraft.ccList.join(", ")}</div>
+              <details style={{marginBottom:8}}>
+                <summary style={{cursor:"pointer",fontSize:11.5,fontWeight:700}}>Ganti penerima / Cc (kalau orangnya berganti)</summary>
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:6,maxWidth:560}}>
+                  <div><label style={{fontSize:11,fontWeight:700}}>Nama penerima (dipakai di sapaan, mis. Mas Alif)</label><input type="text" value={aisContact.name} onChange={e=>setAisContact({...aisContact,name:e.target.value})} /></div>
+                  <div><label style={{fontSize:11,fontWeight:700}}>Email penerima</label><input type="text" value={aisContact.email} onChange={e=>setAisContact({...aisContact,email:e.target.value})} /></div>
+                  <div><label style={{fontSize:11,fontWeight:700}}>Cc (pisahkan dengan koma)</label><textarea rows={3} value={aisContact.cc} onChange={e=>setAisContact({...aisContact,cc:e.target.value})} style={{width:"100%",padding:8,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12}} /></div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button className="icon-btn" onClick={saveAisContact}>Simpan penerima</button>
+                    <button className="icon-btn" onClick={()=>setAisContact({name:"Mas Alif", email:ALIF_TO, cc:ALIF_CC.join(", ")})}>Isi ulang bawaan</button>
+                  </div>
+                </div>
+              </details>
               <div style={{fontSize:11.5,fontWeight:700,marginBottom:4}}>Subject: {alifDraft.subject}</div>
               <textarea readOnly value={alifDraft.body} rows={16} style={{width:"100%",padding:10,border:"2px solid var(--ink)",fontFamily:"var(--sans)",fontSize:12,background:"#fff"}} onFocus={e=>e.target.select()} />
               <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
-                <button className="icon-btn" onClick={()=>copyToClipboard("Subject: "+alifDraft.subject+"\n\n"+alifDraft.body, "Draft email Mas Alif")}>Copy Draft Email</button>
-                <button className="icon-btn" onClick={()=>copyToClipboard(ALIF_CC.join("; "), "Daftar Cc")}>Copy Cc</button>
+                <button className="icon-btn" onClick={()=>copyToClipboard("Subject: "+alifDraft.subject+"\n\n"+alifDraft.body, "Draft email revisi AIS")}>Copy Draft Email</button>
+                <button className="icon-btn" onClick={()=>copyToClipboard(alifDraft.ccList.join("; "), "Daftar Cc")}>Copy Cc</button>
                 <a className="icon-btn" href={alifDraft.mailto} style={{textDecoration:"none"}}>Buka di aplikasi email</a>
               </div>
               {copyFeedback && <div style={{color:"var(--green)",fontWeight:700,fontSize:12,marginTop:6}}>{copyFeedback}</div>}
               <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Kalau tombol buka email memotong isi yang panjang, pakai Copy Draft Email lalu tempel manual. Jangan lupa lampirkan screenshot approval.</div>
-              <TplEditor label="subjek email Mas Alif" rows={2} value={getTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject"]} placeholders="{{DOCNO}} {{CUSTOMER}} {{DISKON}}" onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject", t)} />
-              <TplEditor label={alifDraft.mode==="disc" ? "isi email Mas Alif (rubah Disc%)" : "isi email Mas Alif (rubah Unit Price)"} value={getTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDisc" : "alifPrice"]} placeholders={alifDraft.mode==="disc" ? "{{DOCNO}} {{CUSTOMER}} {{DISKON}} {{DISKON_LAMA_TXT}} {{APPROVAL_LINE}} {{TOTAL_VALUE}} {{DISC_AMT}} {{PPN_PCT}} {{PPN_AMT}} {{TOTAL_AKHIR}} {{LAMPIRAN}} {{PENANDATANGAN}}" : "{{DOCNO}} {{CUSTOMER}} {{DISKON}} {{APPROVAL_LINE}} {{DAFTAR_PART}} {{PART_TETAP}} {{LAMPIRAN}} {{PENANDATANGAN}}"} onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice", t)} />
+              <div style={{marginTop:12,paddingTop:10,borderTop:"2px solid var(--ink)"}}>
+                <div style={{fontWeight:800,fontSize:13,marginBottom:6}}>Checklist konfirmasi dari AIS</div>
+                {!quoAisRev ? (
+                  <div>
+                    <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>Setelah email dikirim, klik tombol ini. Isi email saat ini (part, harga, total) disimpan sebagai acuan, lalu kamu centang satu per satu setelah AIS diubah dan cocok.</div>
+                    <button className="icon-btn" onClick={markAisRevSent}>Tandai email sudah terkirim</button>
+                    {!quoEditingId && <div style={{color:"var(--red)",fontWeight:700,fontSize:12,marginTop:6}}>Penawaran ini belum tersimpan. Klik Simpan Penawaran dulu supaya checklist bisa dicatat.</div>}
+                  </div>
+                ) : (()=>{ const st = aisRevStatus(quoAisRev); return (
+                  <div>
+                    <div style={{fontSize:12,marginBottom:6}}>
+                      Dikirim ke <b>{quoAisRev.to||"-"}</b> pada {new Date(quoAisRev.sentAt).toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric"})} ({quoAisRev.mode==="disc"?"Rubah Disc%":"Rubah Unit Price"}, diskon {pctID(quoAisRev.disc)}%). Status: <b style={{color: st.done?"var(--green)":"#B07C00"}}>{st.label}</b>
+                    </div>
+                    <div style={{overflowX:"auto"}}>
+                      <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+                        <thead><tr><th style={{textAlign:"left"}}>Sudah diubah dan cocok</th><th style={{textAlign:"left"}}>Item</th><th style={{textAlign:"right"}}>Permintaan</th></tr></thead>
+                        <tbody>
+                          {quoAisRev.items.map((it,i)=>(
+                            <tr key={i} style={{borderTop:"1.5px solid var(--line)"}}>
+                              <td><input type="checkbox" checked={!!it.done} onChange={e=>toggleAisRevItem(i,e.target.checked)} /></td>
+                              <td>{it.label}</td>
+                              <td style={{textAlign:"right"}}>{it.from==null ? "" : (it.requested===false ? "tetap "+numID(it.from) : numID(it.from)+" \u2192 "+numID(it.to))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end",marginTop:8}}>
+                      <div>
+                        <label style={{fontSize:11,fontWeight:700}}>Total di AIS setelah revisi (Rp, termasuk PPN)</label>
+                        <input type="text" inputMode="numeric" value={quoAisRev.aisTotal ? numID(quoAisRev.aisTotal) : ""} placeholder="isi dari AIS" onChange={e=>setQuoAisRev({...quoAisRev, aisTotal: e.target.value.replace(/\D/g,"")})} onBlur={()=>persistAisRev(quoAisRev)} style={{maxWidth:230}} />
+                      </div>
+                      <div style={{fontSize:12}}>Total yang diharapkan: <b>{formatRupiah(quoAisRev.expectedTotal)}</b></div>
+                    </div>
+                    {st.hasTotal && (st.totalOk
+                      ? <div style={{color:"var(--green)",fontWeight:700,fontSize:12,marginTop:6}}>Total cocok dengan yang diharapkan.</div>
+                      : <div style={{color:"var(--red)",fontWeight:700,fontSize:12,marginTop:6}}>Total belum cocok. Selisih {formatRupiah(Math.abs(st.diff))}, total di AIS lebih {st.diff>0?"tinggi":"rendah"} dari yang diharapkan.</div>)}
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                      <button className="icon-btn" onClick={checkAllAisRev}>Centang semua</button>
+                      <button className="icon-btn" onClick={resetAisRev} style={{color:"var(--red)"}}>Hapus catatan ini</button>
+                    </div>
+                    <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Acuan di atas adalah isi email saat ditandai terkirim. Kalau mau mencatat revisi baru, hapus catatan ini lalu tandai terkirim lagi.</div>
+                  </div>
+                ); })()}
+              </div>
+              <TplEditor label="subjek email revisi AIS" rows={2} value={getTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject"]} placeholders="{{DOCNO}} {{CUSTOMER}} {{DISKON}}" onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject", t)} />
+              <TplEditor label={alifDraft.mode==="disc" ? "isi email revisi AIS (rubah Disc%)" : "isi email revisi AIS (rubah Unit Price)"} value={getTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDisc" : "alifPrice"]} placeholders={alifDraft.mode==="disc" ? "{{NAMA_PENERIMA}} {{PANGGILAN}} {{DOCNO}} {{CUSTOMER}} {{DISKON}} {{DISKON_LAMA_TXT}} {{APPROVAL_LINE}} {{TOTAL_VALUE}} {{DISC_AMT}} {{PPN_PCT}} {{PPN_AMT}} {{TOTAL_AKHIR}} {{LAMPIRAN}} {{PENANDATANGAN}}" : "{{NAMA_PENERIMA}} {{PANGGILAN}} {{DOCNO}} {{CUSTOMER}} {{DISKON}} {{APPROVAL_LINE}} {{TOTAL_AKHIR}} {{DAFTAR_PART}} {{PART_TETAP}} {{LAMPIRAN}} {{PENANDATANGAN}}"} onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice", t)} />
               </Panel>
             </div>
           )}
@@ -4805,6 +4909,7 @@ function MainApp({onDisconnect, binId}){
                 {quotationsSorted.map(q=>{
                   const st = quoStatus(q);
                   const fu = quoNeedsFu(q);
+                  const aisSt = aisRevStatus(q.aisRev);
                   return (
                   <div className="entry" key={q.id} style={{flexWrap:"wrap"}}>
                     <span className={"tag "+(q.format==="ais"?"visit":"call")}>{q.format==="ais"?"AIS":"Manual"}</span>
@@ -4817,6 +4922,7 @@ function MainApp({onDisconnect, binId}){
                       {st==="lost" && <span className="st-badge" style={{background:"var(--red)"}}>Lost</span>}
                       {st==="arsip" && <span className="st-badge" style={{background:"#777"}}>Arsip</span>}
                       {fu && <span className="st-badge" style={{background:"#B07C00"}}>Follow up {workdaysSince(quoFuBase(q))} hari kerja</span>}
+                      {aisSt && <span className="st-badge" style={{background: aisSt.done ? "var(--green)" : "#B07C00"}}>{aisSt.done ? "AIS cocok" : "Menunggu AIS"}</span>}
                       {st==="lost" && q.lostReason && <span className="meta"> — {q.lostReason}</span>}
                       {quoAutoLost(q) && <span className="meta"> — otomatis: lewat {AUTO_LOST_MONTHS} bulan tanpa kabar</span>}
                     </span>
