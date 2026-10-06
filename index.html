@@ -485,6 +485,7 @@ const ALIF_CC = ["sena.ajie@berca-mp.co.id","budi.johanes@berca-mp.co.id","ramda
 const fillTpl = (tpl, vars)=> String(tpl||"")
   .replace(/\{\{\s*([A-Z0-9_]+)\s*\}\}/g, (m,k)=> (vars && vars[k]!=null) ? String(vars[k]) : "")
   .replace(/[ \t]{2,}/g," ").replace(/[ \t]+\n/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
+const fmtL = n => String(Math.round((Number(n)||0)*100)/100).replace(".",",");
 const numID = n => (Math.round(Number(n)||0)).toLocaleString("id-ID");
 const pctID = x => String(Math.round((Number(x)||0)*100)/100).replace(".",",");
 const DISC_LIMITS = {MITSUBISHI:{promo:40,max:45}, NICHIYU:{promo:40,max:45}, LONKING:{promo:20,max:35}, BYD:{promo:20,max:25}, NOBLELIFT:{promo:20,max:25}};
@@ -1270,6 +1271,8 @@ function MainApp({onDisconnect, binId}){
   const [quoScopeAuto,setQuoScopeAuto] = useState(true);
   const [quoScopeText,setQuoScopeText] = useState("");
   const [quoScopeTitle,setQuoScopeTitle] = useState("SCOPE PEKERJAAN / SERVICE");
+  const [oilMergePrice,setOilMergePrice] = useState(""); // harga oli per liter untuk fitur gabung oli ke pekerjaan
+  const [oilMergeL,setOilMergeL] = useState({}); // liter oli per baris spare part (kunci = nomor baris)
   const [quoTermsAuto,setQuoTermsAuto] = useState(true);
   const [quoTermsText,setQuoTermsText] = useState("");
   const [quotationsByKey,setQuotationsByKey] = useState({});
@@ -2389,9 +2392,11 @@ function MainApp({onDisconnect, binId}){
     const nameOf = d=>{ const p=String(d||"").split(","); const n=(p.length>1?p.slice(1):p).map(x=>x.trim()).filter(Boolean); return n; };
     const clean = n=>n.join(" ").split(/\s+/).filter(w=>!/\d/.test(w)).map(w=>ABBR[w.toUpperCase()]||w).join(" ").trim();
     const spare = quoSpareParts.filter(r=>r.desc&&r.desc.trim()).map(r=>{
-      const n=nameOf(r.desc); if(!n.length) return "";
-      if(/SEAL KIT/i.test(n[0])){ const k=ABBR[(n[1]||"").toUpperCase()]; if(k) return "Exchange Seal Kit "+k+" Cylinder"; }
-      const c=clean(n); return c ? "Exchange "+tc(c) : "";
+      const n=nameOf(r.oilBundle ? r.oilBundle.baseDesc : r.desc); if(!n.length) return "";
+      let line="";
+      if(/SEAL KIT/i.test(n[0])){ const k=ABBR[(n[1]||"").toUpperCase()]; if(k) line="Exchange Seal Kit "+k+" Cylinder"; }
+      if(!line){ const c=clean(n); line = c ? "Exchange "+tc(c) : ""; }
+      return (line && r.oilBundle) ? line+" + Hydra Fluid "+fmtL(r.oilBundle.L)+" L" : line;
     });
     const cons = quoConsumable.filter(r=>r.desc&&r.desc.trim()).map(r=>{
       const n=nameOf(r.desc); const up=n.join(" ").toUpperCase(); if(!n.length) return "";
@@ -2404,6 +2409,48 @@ function MainApp({onDisconnect, binId}){
     return out.join("\n");
   },[quoSpareParts, quoConsumable]);
   const quoScopeLines = (quoScopeAuto ? quoScopeAutoText : quoScopeText).split("\n").map(x=>x.trim()).filter(Boolean);
+  // ===== Gabung oli ke harga pekerjaan (permintaan customer, mis. NSI) =====
+  const oilConsIdx = quoConsumable.findIndex(r=>/HYDRA/i.test(String(r.desc||"")));
+  const oilConsQty = oilConsIdx>=0 ? (Number(quoConsumable[oilConsIdx].qty)||0) : 0;
+  const oilPriceEff = Number(String(oilMergePrice).replace(/\D/g,"")) || (oilConsIdx>=0 ? (Number(quoConsumable[oilConsIdx].unitPrice)||0) : 0);
+  const applyOilMerge = ()=>{
+    if(!oilPriceEff){ setErr("Isi harga oli per liter dulu."); return; }
+    const picks = quoSpareParts.map((r,i)=>({r,i,L:Number(String(oilMergeL[i]||"").replace(",","."))||0}))
+      .filter(x=>x.L>0 && !x.r.oilBundle && (Number(x.r.qty)||0)>0 && (Number(x.r.unitPrice)||0)>0);
+    if(!picks.length){ setErr("Isi liter oli di minimal satu pekerjaan (baris yang punya Qty dan Unit Price)."); return; }
+    const sumL = picks.reduce((t,x)=>t+x.L,0);
+    if(oilConsIdx>=0 && sumL>oilConsQty){ setErr("Liter yang digabung ("+fmtL(sumL)+" L) lebih besar dari oli di Consumable ("+fmtL(oilConsQty)+" L)."); return; }
+    setErr("");
+    const consSnap = oilConsIdx>=0
+      ? {desc:quoConsumable[oilConsIdx].desc, unitPrice:quoConsumable[oilConsIdx].unitPrice, remark:quoConsumable[oilConsIdx].remark||""}
+      : {desc:"H32200-1L, HYDRA FLUID", unitPrice:String(oilPriceEff), remark:""};
+    setQuoSpareParts(quoSpareParts.map((r,i)=>{
+      const p = picks.find(x=>x.i===i); if(!p) return r;
+      const qty = Number(r.qty)||0; const dp = Math.min(100,Math.max(0,Number(r.disc)||0));
+      const net = Math.round((Number(r.unitPrice)||0)*(1-dp/100));
+      const bundled = net + Math.round(p.L*oilPriceEff/qty);
+      return {...r, unitPrice:String(bundled), disc:"", desc:r.desc+" + HYDRA FLUID "+fmtL(p.L/qty)+" L",
+        remark: ((r.remark||"").trim()+(qty>1 ? " (total Hydra Fluid "+fmtL(p.L)+" L)" : "")).trim(),
+        oilBundle:{L:p.L, oilPrice:oilPriceEff, baseDesc:r.desc, baseUnitPrice:r.unitPrice, baseDisc:r.disc||"", baseRemark:r.remark||"", cons:consSnap}};
+    }));
+    if(oilConsIdx>=0){
+      const left = oilConsQty - sumL;
+      setQuoConsumable(quoConsumable.map((r,i)=> i!==oilConsIdx ? r : (left>0 ? {...r, qty:String(left)} : {desc:"", qty:"", unitPrice:"", remark:""})));
+    }
+    setOilMergeL({});
+    setInfo("Oli digabung ke "+picks.length+" pekerjaan. Cek total di preview, harus sama dengan sebelum digabung.");
+  };
+  const undoOilMerge = (i)=>{
+    const r = quoSpareParts[i]; if(!r || !r.oilBundle) return; const b = r.oilBundle;
+    setQuoSpareParts(quoSpareParts.map((x,k)=>{ if(k!==i) return x; const {oilBundle, ...rest} = x; return {...rest, unitPrice:b.baseUnitPrice, disc:b.baseDisc, desc:b.baseDesc, remark:b.baseRemark}; }));
+    const idx = quoConsumable.findIndex(c=>/HYDRA/i.test(String(c.desc||"")));
+    if(idx>=0){ setQuoConsumable(quoConsumable.map((c,k)=> k===idx ? {...c, qty:String((Number(c.qty)||0)+b.L)} : c)); }
+    else {
+      const row = {desc:b.cons.desc, qty:String(b.L), unitPrice:b.cons.unitPrice, remark:b.cons.remark||""};
+      const empty = quoConsumable.findIndex(c=>!String(c.desc||"").trim());
+      setQuoConsumable(empty>=0 ? quoConsumable.map((c,k)=>k===empty?row:c) : [...quoConsumable, row]);
+    }
+  };
   const quoTermsAutoText = [
     "Garansi 200 jam 24 hari kerja",
     "Pengiriman dan Pekerjaan Franco "+((quoCustomerName||"").trim())+" Estimasi +/- 2 Minggu setelah PO",
@@ -4632,6 +4679,38 @@ function MainApp({onDisconnect, binId}){
                   )}
                 </div>
               ))}
+              {quoFormat==="manual" && quoScopeOn && (
+                <Panel id="oilmerge" className="no-print" style={{border:"2px dashed #8a8472",padding:10,marginTop:8,marginBottom:8}} title="Gabung oli ke harga pekerjaan" hint="kalau customer minta oli masuk ke harga tiap pekerjaan (klik untuk buka/tutup)">
+                  <div className="price-hint" style={{marginBottom:8}}>Unit Price part jadi harga net ditambah oli, "Diskon part ini" dikosongkan karena oli tidak kena diskon, dan oli di Consumable otomatis berkurang. Total penawaran tidak berubah. Mau mengubah baris yang sudah digabung? Klik Urai dulu.</div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+                    <span style={{fontSize:11.5,fontWeight:700}}>Harga oli per liter (Rp)</span>
+                    <input type="text" inputMode="numeric" value={formatNominalDisplay(oilMergePrice || (oilConsIdx>=0 ? quoConsumable[oilConsIdx].unitPrice : ""))} onChange={e=>setOilMergePrice(e.target.value.replace(/\D/g,""))} style={{width:130,fontSize:12,padding:"6px 9px"}} />
+                    <span className="price-hint" style={{margin:0}}>Oli Hydra di Consumable saat ini: {oilConsIdx>=0 ? fmtL(oilConsQty)+" L" : "tidak ada"}</span>
+                  </div>
+                  {quoSpareParts.map((r,i)=>{
+                    if(!String(r.desc||"").trim()) return null;
+                    const q = Number(r.qty)||0;
+                    if(r.oilBundle) return (
+                      <div key={i} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                        <span style={{fontSize:12,flex:"1 1 220px"}}>{r.desc}</span>
+                        <b style={{fontSize:11.5,color:"var(--green)"}}>sudah digabung: oli {fmtL(r.oilBundle.L)} L</b>
+                        <button type="button" className="icon-btn" onClick={()=>undoOilMerge(i)}>Urai</button>
+                      </div>
+                    );
+                    const L = Number(String(oilMergeL[i]||"").replace(",","."))||0;
+                    const net = Math.round((Number(r.unitPrice)||0)*(1-Math.min(100,Math.max(0,Number(r.disc)||0))/100));
+                    const after = q>0 ? net + Math.round(L*oilPriceEff/q) : 0;
+                    return (
+                      <div key={i} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                        <span style={{fontSize:12,flex:"1 1 220px"}}>{r.desc} (qty {r.qty||0})</span>
+                        <input type="text" inputMode="decimal" placeholder="liter oli total" value={oilMergeL[i]||""} onChange={e=>setOilMergeL({...oilMergeL,[i]:e.target.value.replace(/[^0-9,.]/g,"")})} style={{width:110,fontSize:12,padding:"6px 9px"}} />
+                        {L>0 && q>0 && <span className="price-hint" style={{margin:0}}>Unit Price jadi Rp {after.toLocaleString("id-ID")} (oli {fmtL(L/q)} L per unit)</span>}
+                      </div>
+                    );
+                  })}
+                  <button type="button" className="icon-btn" onClick={applyOilMerge}>Terapkan gabungan oli</button>
+                </Panel>
+              )}
               {quoFormat==="manual" && quoScopeOn && (
                 <div style={{border:"2px dashed #8a8472",padding:10,marginTop:8,marginBottom:8}}>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:6}}>
