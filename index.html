@@ -527,6 +527,24 @@ function TplEditor({label, value, defaultValue, placeholders, onSave, rows}){
   );
 }
 
+// Panel buka/tutup. Status terakhir (buka/tutup) diingat di browser perangkat ini.
+function Panel({id, title, hint, defaultOpen, className, style, children}){
+  const [open,setOpen] = useState(()=>{
+    try{ const v = localStorage.getItem("vcs_panel_"+id); if(v==="1") return true; if(v==="0") return false; }catch(e){}
+    return !!defaultOpen;
+  });
+  return (
+    <details open={open} className={className} style={style}
+      onToggle={e=>{ const o = e.currentTarget.open; if(o!==open){ setOpen(o); try{ localStorage.setItem("vcs_panel_"+id, o?"1":"0"); }catch(err){} } }}>
+      <summary style={{cursor:"pointer",listStyle:"revert",marginBottom:8}}>
+        <h2 className="section" style={{display:"inline-block",margin:0}}>{title}</h2>
+        {hint && <span style={{fontSize:11.5,color:"var(--muted)",marginLeft:8}}>{hint}</span>}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 // Data unit per customer (dari file Customer). Hanya ada di kode, tidak ikut tersimpan ke Cloud.
 // Format: kunci nama customer (tanpa PT/CV dan kode) -> [[merk, model, serial number], ...]
 const UNIT_DIRECTORY = {"SANTOSA AGRINDO":[["MITSUBISHI","FD30PD-2FP30-PS/PS","CF14J15046"]],"SUMATRACO LANGGENG MAKMUR":[["LONKING","LG30DT",""],["LONKING","LG30GLT",""],["LONKING","CDM932NG",""]],"DEKADE PRIORITAS":[["LONKING","ZL50C","LSH050NCEMAA11786"],["LONKING","CDM 512B","LSL0512BHMA501836"],["LONKING","CDM6060","LSW0060DPN0009198"],["MITSUBISHI","FG30ND-3FP47-PS/PS","CF13F-48661"],["LONKING","CDM6225","LSW225EKEM0085518"]],"NIPPON SHOKUBAI INDONESIA":[["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84706"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71115"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71114"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71118"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-71119"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84055"],["MITSUBISHI","FD25ND-2FP30-PS/PS","CF18C-84705"]],"PRATAMA MANDIRI MULYA":[["LONKING","LG876","LSH0876NCNAC10955"]],"INDOHARA CIKANDE":[["MITSUBISHI","FD30ND-2SP30-PS/PS","CF14E-19291"]],"BAHARI MAKMUR SEJATI":[["NICHIYU","FBRAW15-75C-600MCS","182ZR3074"],["MITSUBISHI","FD25NT-2SP40-PS/PS","CF18C-71278"]],"BERKAH MANIS MAKMUR":[["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40232"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40236"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40237"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40238"],["MITSUBISHI","FG30ND-2SP60-US/US","CF13F-40239"]],"BANTEN PUTRA JAYA MANDIRI":[["MITSUBISHI","FD30HS-3FP40-PS/PS","CF51-10032"]],"SELAGO MAKMUR PLANTATION":[["MITSUBISHI","FD50N-2SP50-SPED","CF28C-50155"]],"KARUNIA BERCA INDONESIA":[["MITSUBISHI","FD30NT-2SP30-PS/PS","CF14E-19224"]],"BUDI TEXINDO PRAKARSA":[["MITSUBISHI","FD30ND-2FP30-PS/PS","CF14E-19800"]],"YULIANA INTI PERSADA":[["LONKING","CDM307","LSL00307CNA882258"]],"JM MUTU UTAMA":[["MITSUBISHI","FD35ND-3FP43-PS/PS","CF14E-87304"]],"ARTHA JAYA MAS":[["MITSUBISHI","FD25NT-2SP30-PS/PS","CF18C-84238"]],"TIRTA BINTANG FORTUNA":[["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84597"]],"POLYPLAST DWIPUTRA PRATAMA":[["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84489"],["MITSUBISHI","FD25ND-2SP30-PS/PS","CF18C-84490"]],"AGATA MAS CIKUPA":[["MITSUBISHI","FD30ND-3FP47-PS/PS","CF14E-22099"]],"NURIT IRIYANTO":[["MITSUBISHI","FD30PD-2SP30-US/US","CF14J-15201"]],"BEREMPAT MAJU SEJAHTERA":[["MITSUBISHI","FD30PD-2SP40-PS/PS","CF14J-15269"]],"GALVINDO INTISELARAS":[["MITSUBISHI","FD35NT-2SP30-US/US","CF14E-87352"]],"GARI SETIAWAN MAKMUR":[["LONKING","CDM312","LSL00312CPA601350"]],"MEDIKARYA AMINAH UTAMA":[["BP","KTA19 G4/BP C550S","41355011"]],"PRATAMA WIDYA":[["BP","6LTAA8.9 G2/BP C275DS","93227339"]],"JAPFA COMFEED INDONESIA":[["MITSUBISHI","FD35ND-2SP50-PS/PS","CF14E-87222"]],"TRI SEKAWAN MAJU":[["BYD","CPD25","50001232813"]],"SATRIA PIRANTI PERKASA":[["MITSUBISHI","FD35ND-2SP50-UD/US","CF14E-87245"]],"CIPTAPAPERIA":[["LONKING","CDM833","LSH0833NHPAC07308"]],"SEIWA LOGISTICS INDONESIA":[["NICHIYU","FB15PN-80C 300SF","256F-01368"],["NICHIYU","FB15PN-80C 300SF","256F-01369"]],"NIKOMAS GEMILANG":[["NICHIYU","FBR20-75","186E00184"]],"SUMBER KARYA UTAMA":[["LONKING","CDM307","LSL00307CRA601963"]],"INTERCIPTA KIMIA PRATAMA":[["MITSUBISHI","FD25NT-2FP30-PS/PS","CF18C-83912"]],"INTI CELLULOSEUTAMA INDONESIA":[["MITSUBISHI","FD30ND-3FP43-PS/PS","CF14E-22015"]],"INFRA SOLUSI INDONESIA":[["NICHIYU","FB15-80 430M","256F-01159"]],"RANGKAS MULYA SENTOSA":[["NICHIYU","FB18-80 500","256F00895"],["NICHIYU","FB18-80 500","256F00424"]],"MUTIARA FORKLIFT":[["MITSUBISHI","FD30ND-3FP43-PS/PS","F14E-11859"]],"INDOCERA UTAMA PRECISI":[["MITSUBISHI","FD30PD-3FP47-PS/PS","CF14J16087"]],"SUMBER KABEL INDONESIA":[["NOBLELIFT","CPD25-AF1H","NL1202552485"]],"BICC BERCA CABLES":[["MITSUBISHI","FD50N-2SP40-SPED","CF28C51850"]],"BANDO INDONESIA":[["BYD","CPD30","50201253678"]],"KARSAVICTA SATYA":[["BYD","CPD25 4500M FFL","50001242398"]],"VISTA CHEM INDONESIA":[["BYD","CPD25 5000MM","50001251523"]],"ADYABOGA PRANATA INDUSTRIES":[["NICHIYU","PLD20S-N507",""]],"ALAMKACA PRABAWA INDONESIA":[["MITSUBISHI","FD35ND",""]],"NATURAL GLASS PRABAWA INDONESIA":[["MITSUBISHI","FD35ND",""]],"AGUNG ABADI SENTOSA":[["MITSUBISHI","FD30D",""]],"AMOCO MITSUI PTA INDONESIA":[["MITSUBISHI","FG30ND",""]],"ARAI RUBBER SEAL INDONESIA":[["MITSUBISHI","FD35ND",""]],"ANUGRAH MITRAMAS PRATAMA":[["MITSUBISHI","FD25ND",""]],"APIKAYU GLYCERIN REFINERY":[["LONKING","CLG816C","LGZ816CZJJZ"]],"ALVINDO MULTI SEJAHTERA":[["MITSUBISHI","FD30ND",""]],"AGUNG PELITA INDUSTRINDO":[["MITSUBISHI","FD30NT",""]]};
@@ -3385,9 +3403,9 @@ function MainApp({onDisconnect, binId}){
     XLSX.writeFile(wb, "Laporan_Tahunan_"+fnameUser+"_"+year+"_"+localISO(today)+".xlsx");
   };
 
-  const renderSignerCard = ()=>(
+  const renderSignerCard = (inPanel)=>(
           <div className="signer-card no-print">
-            <h2 className="section" style={{marginTop:0}}>Penanda Tangan {helpBtn("ttd")}</h2>
+            {inPanel ? <div style={{textAlign:"right"}}>{helpBtn("ttd")}</div> : <h2 className="section" style={{marginTop:0}}>Penanda Tangan {helpBtn("ttd")}</h2>}
             <label>✍️ Pilih yang tersimpan</label>
             <select value={signers.activeId||""} onChange={e=>selectSigner(e.target.value)}>
               <option value="">Default (nama profil, tanpa gambar TTD)</option>
@@ -4612,11 +4630,7 @@ function MainApp({onDisconnect, binId}){
           )}
 
           <div className="no-print" style={{marginBottom:20}}>
-            <details>
-            <summary style={{cursor:"pointer",listStyle:"revert",marginBottom:10}}>
-              <h2 className="section" style={{display:"inline-block",margin:0}}>Draft Pesan (Siap Copy-Paste)</h2>
-              <span style={{fontSize:11.5,color:"var(--muted)",marginLeft:8}}>WA dan email penawaran (klik untuk buka/tutup)</span>
-            </summary>
+            <Panel id="draftpesan" title="Draft Pesan (Siap Copy-Paste)" hint="WA dan email penawaran (klik untuk buka/tutup)">
             {copyFeedback && <div style={{color:"var(--green)",fontWeight:700,fontSize:12,marginBottom:8}}>{copyFeedback}</div>}
 
             <div style={{marginBottom:16}}>
@@ -4638,17 +4652,14 @@ function MainApp({onDisconnect, binId}){
               <TplEditor label="subjek email penawaran" rows={2} value={getTpl("emailQuoSubject")} defaultValue={DEFAULT_TEMPLATES.emailQuoSubject} placeholders="{{DOCNO}} {{UNIT_LABEL}} {{CUSTOMER}}" onSave={t=>saveTpl("emailQuoSubject",t)} />
               <TplEditor label="isi email penawaran" value={getTpl("emailQuo")} defaultValue={DEFAULT_TEMPLATES.emailQuo} placeholders="{{PIC_FORMAL}} {{PIC}} {{CUSTOMER}} {{UNIT_EMAIL}} {{DOCNO}} {{TANGGAL}} {{TOTAL}} {{CATATAN_SUPERSEDE}} {{INFO_STOK}} {{PENANDATANGAN}}" onSave={t=>saveTpl("emailQuo",t)} />
             </div>
-            </details>
+            </Panel>
           </div>
 
-          {(alifDraft.rows.length>0 || (quoDocNo||"").trim()) && (
+          {(
             <div className="no-print" style={{border:"2.5px solid var(--ink)",background:"var(--paper-raise)",padding:"12px 14px",marginBottom:16,fontFamily:"var(--sans)"}}>
-              <details>
-              <summary style={{cursor:"pointer",listStyle:"revert"}}>
-                <h2 className="section" style={{display:"inline-block",margin:0}}>Draft Email ke Mas Alif (Revisi Diskon / Unit Price di AIS)</h2>
-                <span style={{fontSize:11.5,color:"var(--muted)",marginLeft:8}}>{alifDraft.mode==="disc" ? "Rubah Disc%" : "Rubah Unit Price"}, diskon {pctID(alifDraft.discNew)}% (klik untuk buka/tutup)</span>
-              </summary>
+              <Panel id="alif" title="Draft Email ke Mas Alif (Revisi Diskon / Unit Price di AIS)" hint={(alifDraft.mode==="disc" ? "Rubah Disc%" : "Rubah Unit Price")+", diskon "+pctID(alifDraft.discNew)+"% (klik untuk buka/tutup)"}>
               <div style={{marginTop:8}}></div>
+              {alifDraft.rows.length===0 && <div style={{color:"var(--red)",fontWeight:700,fontSize:12,marginBottom:8}}>Belum ada part di form. Klik Edit pada penawaran di Riwayat Penawaran, atau isi rincian part dulu, baru draft email terisi.</div>}
               <div style={{fontSize:12,color:"var(--muted)",marginBottom:10}}>Pakai ini setelah diskon atau harga di VCS diubah dan perlu disamakan di AIS. Harga lama adalah harga satuan sebelum diskon pada penawaran ini. Penerima dan Cc sudah terisi.</div>
 
               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
@@ -4708,7 +4719,7 @@ function MainApp({onDisconnect, binId}){
               <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Kalau tombol buka email memotong isi yang panjang, pakai Copy Draft Email lalu tempel manual. Jangan lupa lampirkan screenshot approval.</div>
               <TplEditor label="subjek email Mas Alif" rows={2} value={getTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject"]} placeholders="{{DOCNO}} {{CUSTOMER}} {{DISKON}}" onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDiscSubject" : "alifPriceSubject", t)} />
               <TplEditor label={alifDraft.mode==="disc" ? "isi email Mas Alif (rubah Disc%)" : "isi email Mas Alif (rubah Unit Price)"} value={getTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice")} defaultValue={DEFAULT_TEMPLATES[alifDraft.mode==="disc" ? "alifDisc" : "alifPrice"]} placeholders={alifDraft.mode==="disc" ? "{{DOCNO}} {{CUSTOMER}} {{DISKON}} {{DISKON_LAMA_TXT}} {{APPROVAL_LINE}} {{TOTAL_VALUE}} {{DISC_AMT}} {{PPN_PCT}} {{PPN_AMT}} {{TOTAL_AKHIR}} {{LAMPIRAN}} {{PENANDATANGAN}}" : "{{DOCNO}} {{CUSTOMER}} {{DISKON}} {{APPROVAL_LINE}} {{DAFTAR_PART}} {{PART_TETAP}} {{LAMPIRAN}} {{PENANDATANGAN}}"} onSave={t=>saveTpl(alifDraft.mode==="disc" ? "alifDisc" : "alifPrice", t)} />
-              </details>
+              </Panel>
             </div>
           )}
 
@@ -4773,8 +4784,7 @@ function MainApp({onDisconnect, binId}){
             </div>
           )}
 
-          <div className="no-print">
-            <h2 className="section" style={{marginBottom:10}}>Riwayat Penawaran — {quarter.label}</h2>
+          <Panel id="riwayat" defaultOpen={true} className="no-print" style={{marginBottom:16}} title={"Riwayat Penawaran \u2014 "+quarter.label}>
             <div className="extract-note" style={{fontStyle:"normal",fontWeight:600}}>
               Deal: {formatRupiah(quoValues.deal)} &bull; Lost: {formatRupiah(quoValues.lost)} &bull; Masih Open: {formatRupiah(quoValues.open)}
             </div>
@@ -4821,9 +4831,11 @@ function MainApp({onDisconnect, binId}){
                 })}
               </div>
             )}
-          </div>
+          </Panel>
 
-          {renderSignerCard()}
+          <Panel id="signer" className="no-print" style={{marginBottom:16}} title="Penanda Tangan" hint={"aktif: "+signerName+" (klik untuk buka/tutup)"}>
+            {renderSignerCard(true)}
+          </Panel>
 
           <h2 className="section no-print">Preview</h2>
 
