@@ -2429,8 +2429,8 @@ function MainApp({onDisconnect, binId}){
       const qty = Number(r.qty)||0; const dp = Math.min(100,Math.max(0,Number(r.disc)||0));
       const net = Math.round((Number(r.unitPrice)||0)*(1-dp/100));
       const bundled = net + Math.round(p.L*oilPriceEff/qty);
-      return {...r, unitPrice:String(bundled), disc:"", desc:r.desc+" + HYDRA FLUID "+fmtL(p.L/qty)+" L",
-        remark: ((r.remark||"").trim()+(qty>1 ? " (total Hydra Fluid "+fmtL(p.L)+" L)" : "")).trim(),
+      return {...r, unitPrice:String(bundled), disc:"", desc:r.desc+" + HYDRA FLUID "+fmtL(p.L)+" L",
+        remark: (r.remark||"").trim(),
         oilBundle:{L:p.L, oilPrice:oilPriceEff, baseDesc:r.desc, baseUnitPrice:r.unitPrice, baseDisc:r.disc||"", baseRemark:r.remark||"", cons:consSnap}};
     }));
     if(oilConsIdx>=0){
@@ -3329,7 +3329,10 @@ function MainApp({onDisconnect, binId}){
       setCopyFeedback("Browser ini tidak mendukung salin otomatis, silakan salin manual dari kotak teks di bawah.");
     }
   };
-  const renderManualSection = (title, calc, hasDisc)=>(
+  const renderManualSection = (title, calc, hasDisc)=>{
+    const shownRows = calc.rows.filter(r=>String(r.desc||"").trim() || r.ext>0);
+    if(!shownRows.length) return null;
+    return (
     <table className="quo-manual-table" key={title}>
       <thead>
         <tr><th colSpan={6} className="quo-manual-section-head">{title}</th></tr>
@@ -3340,7 +3343,7 @@ function MainApp({onDisconnect, binId}){
         </tr>
       </thead>
       <tbody>
-        {calc.rows.map((r,idx)=>(
+        {shownRows.map((r,idx)=>(
           <tr key={idx}>
             <td>{idx+1}</td>
             <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
@@ -3362,7 +3365,8 @@ function MainApp({onDisconnect, binId}){
         <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl quo-manual-grandtotal">TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(calc.total).toLocaleString("id-ID")}</td><td></td></tr>
       </tbody>
     </table>
-  );
+    );
+  };
 
   const exportQuarterToExcel = ()=>{
     const wb = XLSX.utils.book_new();
@@ -4704,7 +4708,7 @@ function MainApp({onDisconnect, binId}){
                       <div key={i} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
                         <span style={{fontSize:12,flex:"1 1 220px"}}>{r.desc} (qty {r.qty||0})</span>
                         <input type="text" inputMode="decimal" placeholder="liter oli total" value={oilMergeL[i]||""} onChange={e=>setOilMergeL({...oilMergeL,[i]:e.target.value.replace(/[^0-9,.]/g,"")})} style={{width:110,fontSize:12,padding:"6px 9px"}} />
-                        {L>0 && q>0 && <span className="price-hint" style={{margin:0}}>Unit Price jadi Rp {after.toLocaleString("id-ID")} (oli {fmtL(L/q)} L per unit)</span>}
+                        {L>0 && q>0 && <span className="price-hint" style={{margin:0}}>Unit Price jadi Rp {after.toLocaleString("id-ID")} (deskripsi: HYDRA FLUID {fmtL(L)} L)</span>}
                       </div>
                     );
                   })}
