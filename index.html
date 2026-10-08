@@ -1127,7 +1127,8 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
         <div className="stat"><div className="num">{sum.selesai}</div><div className="lbl">Selesai</div></div>
       </div>
 
-      <div className="signer-card no-print" style={{marginBottom:20}}>
+      <Panel id="pt_form" defaultOpen={true} className="no-print" style={{marginBottom:20}} title="Input Part Baru" hint="(klik untuk buka/tutup)">
+      <div className="signer-card" style={{marginTop:8}}>
         <div className="type-toggle" style={{marginBottom:10}}>
           {Object.keys(PART_TYPES).map(k=>(
             <div key={k} className={"type-btn"+(fType===k?(k==="bo"?" active-visit":" active-call"):"")} onClick={()=>setFType(k)}>{PART_TYPES[k].label}</div>
@@ -1154,6 +1155,7 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
         <button type="button" className="add-btn" onClick={add} disabled={!ready} style={!ready?{opacity:.5,cursor:"not-allowed"}:null}>Simpan Part</button>
         {msg && <div style={{color:msg.e?"var(--red)":"var(--green)",fontFamily:"var(--sans)",fontWeight:600,fontSize:12.5,marginTop:10}}>{msg.t}</div>}
       </div>
+      </Panel>
 
       <div className="tabs" style={{flexWrap:"wrap"}}>
         {[["aktif","Aktif"],["aksi","Perlu Aksi ("+sum.aksi+")"],["selesai","Selesai"],["semua","Semua"]].map(f=>(
@@ -1164,7 +1166,12 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
 
       {rows.length===0 && <div className="empty">{items.length===0 ? "Belum ada part yang dicatat." : "Tidak ada part yang cocok dengan filter ini."}</div>}
 
-      {rows.map(({it,al})=>{
+      {Object.keys(PART_TYPES).map(tk=>{
+        const grows = rows.filter(r=>r.it.type===tk);
+        if(!grows.length) return null;
+        return (
+        <Panel key={tk} id={"pt_grp_"+tk} defaultOpen={true} style={{marginBottom:14}} title={PART_TYPES[tk].label+" ("+grows.length+")"} hint="(klik untuk buka/tutup)">
+        {grows.map(({it,al})=>{
         const T2 = PART_TYPES[it.type]; const done = ptIsDone(it);
         const sev = al.reduce((m,x)=>Math.max(m,x.sev),0);
         const arrived = !done && it.stage===T2.stages.length-2;
@@ -1227,6 +1234,9 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
               </div>
             )}
           </div>
+        );
+        })}
+        </Panel>
         );
       })}
     </React.Fragment>
