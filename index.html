@@ -328,6 +328,38 @@
   .combo-item .cmeta{color:var(--muted);font-size:11.5px;}
   .combo-item:hover .cmeta,.combo-item.hi .cmeta{color:#f6d9d5;}
   .combo-empty{padding:11px 12px;font-family:var(--sans);font-size:12px;color:var(--muted);font-style:italic;}
+  /* ---- Tracking Part (Indent / Stock Cabang / BO Emergency) ---- */
+  .pt-card{border:2.5px solid var(--ink);border-left-width:9px;background:var(--paper-raise);padding:12px 14px;margin-bottom:12px;font-family:var(--sans);}
+  .pt-card.al0{border-left-color:var(--blue);}
+  .pt-card.al1{border-left-color:var(--yellow);}
+  .pt-card.al2{border-left-color:var(--red);}
+  .pt-card.al3{border-left-color:var(--green);}
+  .pt-card.done{opacity:.72;border-left-color:var(--muted);}
+  .pt-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;}
+  .pt-is{font-family:var(--disp);font-size:15px;letter-spacing:.3px;}
+  .pt-noIS{font-weight:700;font-size:10.5px;color:var(--red);text-transform:uppercase;letter-spacing:.5px;}
+  .pt-tag{font-size:9.5px;font-weight:700;padding:4px 8px;text-transform:uppercase;letter-spacing:.6px;color:#fff;background:var(--blue);flex-shrink:0;}
+  .pt-tag.bo{background:var(--red);}
+  .pt-tag.cabang{background:var(--green);}
+  .pt-cust{font-weight:700;font-size:13.5px;}
+  .pt-part{font-size:12.5px;color:var(--muted);margin:2px 0 8px;line-height:1.45;}
+  .pt-steps{display:flex;gap:3px;margin:6px 0 5px;}
+  .pt-step{flex:1;height:8px;background:var(--line);}
+  .pt-step.past{background:var(--ink);}
+  .pt-step.now{background:var(--yellow);outline:2px solid var(--ink);}
+  .pt-stage{font-size:12.5px;font-weight:700;}
+  .pt-stage span{font-weight:500;color:var(--muted);}
+  .pt-chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px;}
+  .pt-chip{font-size:10.5px;font-weight:700;padding:3px 8px;border:2px solid var(--ink);background:#FFF3D6;}
+  .pt-chip.r{background:#FBEAE9;border-color:var(--red);color:var(--red);}
+  .pt-chip.g{background:#DFF3E1;border-color:var(--green);color:var(--green);}
+  .pt-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
+  .pt-panel{background:#EAE2CC;border:2px solid var(--ink);padding:12px;margin-top:10px;}
+  .pt-panel .logform{margin-bottom:8px;}
+  .pt-hist{margin-top:10px;font-size:12px;border-top:2px solid var(--line);padding-top:8px;line-height:1.5;}
+  .pt-hist b{font-weight:700;}
+  .pt-hist .m{color:var(--muted);}
+  .pt-form-note{font-size:11.5px;color:var(--muted);font-style:italic;line-height:1.5;margin:0 0 12px;}
 </style>
 
 </head>
@@ -899,6 +931,308 @@ function countWorkdaysBetween(start,end,holidays){
   return c;
 }
 
+// ===== Tracking Part: Indent (via Jakarta), Stock Cabang (No. IS), BO / Emergency (tanpa IS, FU manual) =====
+const PART_TYPES = {
+  indent: {label:"Indent", short:"INDENT", hasIS:true, numLabel:"No. IS", isFrom:2,
+    stages:["Order indent dibuat","Diproses di Jakarta","Dikirim Jakarta ke Cilegon","Tiba di Cilegon","Sudah ke customer"],
+    hint:"Indent biasanya masuk Jakarta dulu, baru dikirim ke Cilegon. No. IS terbit saat Jakarta mengirim, jadi boleh dikosongkan dulu."},
+  cabang: {label:"Stock Cabang", short:"CABANG", hasIS:true, numLabel:"No. IS", isFrom:1,
+    stages:["Request ke cabang","Dikirim cabang ke Cilegon","Tiba di Cilegon","Sudah ke customer"],
+    hint:"Part stock yang dikirim dari cabang lain. Ada No. IS (contoh IS00841), isi begitu sudah ada."},
+  bo: {label:"BO / Emergency", short:"BO", hasIS:true, numLabel:"No. BO / Emergency", isFrom:null,
+    stages:["BO dipesan","ETA terkonfirmasi","Tiba di Cilegon","Sudah ke customer"],
+    hint:"BO / emergency punya nomor sendiri (bukan No. IS). Isi nomornya kalau sudah ada. Karena tidak ada No. IS yang bisa dilacak, harus di-FU langsung; pengingat FU muncul tiap 2 hari kerja tanpa update."}
+};
+const ptNormIS = s => String(s||"").toUpperCase().replace(/\s+/g,"");
+const ptNormNo = (type,s) => type==="bo" ? String(s||"").trim().toUpperCase() : ptNormIS(s);
+const ptFmt = d => d ? (d.slice(8,10)+"/"+d.slice(5,7)+"/"+d.slice(2,4)) : "-";
+const ptLastStage = it => (PART_TYPES[it.type]||PART_TYPES.bo).stages.length-1;
+const ptIsDone = it => it.stage>=ptLastStage(it);
+function ptHolidays(a,b){ let h=[]; for(let y=a.getFullYear(); y<=b.getFullYear(); y++) h=h.concat(getHolidaysForYear(y)); return h; }
+function ptWorkdaysSince(dateStr){
+  if(!dateStr) return 0;
+  const s = new Date(dateStr+"T00:00:00"); s.setDate(s.getDate()+1);
+  const e = new Date(); if(s>e) return 0;
+  return countWorkdaysBetween(s, e, ptHolidays(s,e));
+}
+function ptDaysBetween(a,b){ return Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); }
+function ptLastDate(it){ const h=it.history||[]; return h.length ? h.map(x=>x.date).sort().slice(-1)[0] : (it.orderDate||""); }
+// Alasan sebuah part perlu perhatian. sev 3 = sudah tiba (belum diserahkan), 2 = ETA lewat, 1 = perlu FU / lengkapi IS
+function ptAlerts(it){
+  const T = PART_TYPES[it.type]; if(!T || ptIsDone(it)) return [];
+  const out = []; const today = localISO(); const last = T.stages.length-1;
+  if(it.stage===last-1){
+    const n = ptWorkdaysSince(ptLastDate(it));
+    out.push({k:"tiba", sev:3, text: n>0 ? "Sudah tiba "+n+" hari kerja, belum diserahkan ke customer" : "Sudah tiba di Cilegon, belum diserahkan ke customer"});
+    return out;
+  }
+  if(it.eta && it.eta<today) out.push({k:"telat", sev:2, text:"ETA lewat "+ptDaysBetween(it.eta,today)+" hari"});
+  const lim = it.type==="bo" ? 2 : 3;
+  const w = ptWorkdaysSince(ptLastDate(it));
+  if(w>=lim) out.push({k:"fu", sev:1, text:"Belum ada update "+w+" hari kerja, saatnya FU"});
+  if(T.isFrom!=null && it.stage>=T.isFrom && !it.isNo) out.push({k:"noIS", sev:1, text:"No. IS belum diisi"});
+  return out;
+}
+function ptSummary(items){
+  const s = {aktif:0, tiba:0, telat:0, fu:0, noIS:0, aksi:0, selesai:0};
+  (items||[]).forEach(it=>{
+    if(!PART_TYPES[it.type]) return;
+    if(ptIsDone(it)){ s.selesai++; return; }
+    s.aktif++;
+    const al = ptAlerts(it);
+    if(al.length) s.aksi++;
+    al.forEach(a=>{ if(s[a.k]!=null) s[a.k]++; });
+  });
+  return s;
+}
+function ptBuildFu(it, toCustomer){
+  const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
+  const part = ((it.partNo||"")+" "+(it.desc||"")).trim() + (it.qty ? " (qty "+it.qty+")" : "");
+  if(toCustomer){
+    return ["Selamat "+sapa+",", "Kami info, part untuk "+it.customer+" sudah tiba di depo Cilegon:", "- "+part, "", "Kira-kira kapan jadwal yang pas untuk pengiriman atau pemasangannya ya? Kami siap sesuaikan dengan jadwal operasional di sana.", "Terimakasih."].join("\n");
+  }
+  const what = it.type==="bo" ? ("BO emergency"+(it.isNo ? " "+it.isNo : "")) : (it.isNo ? "pengiriman "+it.isNo : ( (it.type==="indent" ? "order indent" : "request part ke cabang")));
+  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", "- Part: "+part, "- Customer: "+it.customer];
+  if(it.ref) lines.push("- Ref: "+it.ref);
+  if(it.type==="cabang" && it.branch) lines.push("- Asal: "+it.branch);
+  if(it.eta) lines.push("- ETA sebelumnya: "+ptFmt(it.eta));
+  lines.push("", "Sudah sampai mana update-nya? Mohon info estimasi tiba di Cilegon, karena customer menunggu.", "Terimakasih.");
+  return lines.join("\n");
+}
+
+function PartTracker({items, ready, loadErr, onChange, customers}){
+  const today = localISO();
+  const [fType,setFType] = useState("indent");
+  const [fIS,setFIS] = useState("");
+  const [fCust,setFCust] = useState("");
+  const [fPartNo,setFPartNo] = useState("");
+  const [fDesc,setFDesc] = useState("");
+  const [fQty,setFQty] = useState("");
+  const [fBranch,setFBranch] = useState("");
+  const [fRef,setFRef] = useState("");
+  const [fDate,setFDate] = useState(today);
+  const [fEta,setFEta] = useState("");
+  const [msg,setMsg] = useState(null);
+  const [filter,setFilter] = useState("aktif");
+  const [search,setSearch] = useState("");
+  const [histId,setHistId] = useState(null);
+  const [upId,setUpId] = useState(null);
+  const [uStage,setUStage] = useState(0);
+  const [uDate,setUDate] = useState(today);
+  const [uNote,setUNote] = useState("");
+  const [uIS,setUIS] = useState("");
+  const [uEta,setUEta] = useState("");
+  const [uCust,setUCust] = useState("");
+  const [uPartNo,setUPartNo] = useState("");
+  const [uDesc,setUDesc] = useState("");
+  const [uQty,setUQty] = useState("");
+  const [uAll,setUAll] = useState(true);
+  const [copiedId,setCopiedId] = useState(null);
+
+  const T = PART_TYPES[fType];
+  const branchOpts = BERCA_BRANCHES_TOP.concat(BERCA_BRANCHES.filter(b=>BERCA_BRANCHES_TOP.indexOf(b)<0)).filter(b=>b!=="Cilegon");
+  const sum = ptSummary(items);
+
+  const add = ()=>{
+    if(!ready) return;
+    const cust = fCust.trim();
+    if(!cust){ setMsg({e:true,t:"Isi nama customer dulu."}); return; }
+    if(!fPartNo.trim() && !fDesc.trim()){ setMsg({e:true,t:"Isi No. Part atau deskripsi part dulu."}); return; }
+    if(fType==="cabang" && !fBranch){ setMsg({e:true,t:"Pilih cabang asal pengirimnya dulu."}); return; }
+    const is = ptNormNo(fType, fIS);
+    const it = {
+      id:"pt"+Date.now()+Math.floor(Math.random()*1000), type:fType, isNo:is, customer:cust,
+      partNo:fPartNo.trim().toUpperCase(), desc:fDesc.trim(), qty:fQty.trim(),
+      branch: fType==="indent" ? "Jakarta" : (fType==="cabang" ? fBranch : ""),
+      ref:fRef.trim(), orderDate:fDate||today, eta:fEta||"", stage:0,
+      history:[{date:fDate||today, stage:0, note:"Dicatat"}], createdAt:new Date().toISOString()
+    };
+    onChange([it, ...items]);
+    // customer, jenis, IS, cabang tetap terisi supaya bisa langsung input part berikutnya di IS yang sama
+    setFPartNo(""); setFDesc(""); setFQty("");
+    const warn = (is && fType!=="bo" && !/^IS\d{4,}$/.test(is)) ? " Format No. IS tidak seperti biasanya (contoh IS00841), mohon dicek lagi." : "";
+    setMsg({e:false,t:"Part tersimpan. Customer dan No. IS dibiarkan terisi untuk input part berikutnya." + warn});
+  };
+
+  const groupOf = it => (it.isNo && !ptIsDone(it)) ? items.filter(x=>x.id!==it.id && x.isNo===it.isNo && x.type===it.type && x.stage===it.stage) : [];
+  const applyStage = (ids, stage, note, date, extraFn)=>{
+    const next = items.map(x=> ids.indexOf(x.id)>=0 ? {...x, ...(extraFn?extraFn(x):{}), stage, history:[...(x.history||[]), {date, stage, note:note||""}]} : x);
+    onChange(next);
+  };
+  const openUpdate = (it, stage)=>{
+    setUpId(it.id); setUStage(stage!=null?stage:it.stage); setUDate(today); setUNote("");
+    setUIS(it.isNo||""); setUEta(it.eta||""); setUCust(it.customer||""); setUPartNo(it.partNo||""); setUDesc(it.desc||""); setUQty(it.qty||"");
+    setUAll(true);
+  };
+  const quickAdvance = it=>{
+    const T2 = PART_TYPES[it.type]; const ns = it.stage+1;
+    // Masuk tahap "dikirim" tapi No. IS belum ada: buka form update supaya IS-nya diisi dulu
+    if(T2.isFrom!=null && ns>=T2.isFrom && ns<T2.stages.length-1 && !it.isNo){ openUpdate(it, ns); return; }
+    const ids = [it.id].concat(groupOf(it).map(x=>x.id));
+    applyStage(ids, ns, "", today);
+  };
+  const saveUpdate = it=>{
+    const T2 = PART_TYPES[it.type];
+    const is = ptNormNo(it.type, uIS);
+    const grp = uAll ? groupOf(it) : [];
+    const ids = [it.id].concat(grp.map(x=>x.id));
+    const next = items.map(x=>{
+      if(ids.indexOf(x.id)<0) return x;
+      const base = {...x, stage:uStage, history:[...(x.history||[]), {date:uDate||today, stage:uStage, note:uNote.trim()}]};
+      if(is) base.isNo = is;
+      if(x.id===it.id){ base.eta = uEta||""; base.customer = uCust.trim()||x.customer; base.partNo = uPartNo.trim().toUpperCase(); base.desc = uDesc.trim(); base.qty = uQty.trim(); }
+      else if(uEta){ base.eta = uEta; }
+      return base;
+    });
+    onChange(next); setUpId(null);
+    if(it.type!=="bo" && is && !/^IS\d{4,}$/.test(is)) setMsg({e:true,t:"Tersimpan, tapi format No. IS tidak seperti biasanya (contoh IS00841). Mohon dicek lagi."});
+  };
+  const remove = it=>{
+    if(!window.confirm("Hapus catatan part "+(it.isNo?it.isNo+" - ":"")+(it.partNo||it.desc)+" untuk "+it.customer+"? Tindakan ini tidak bisa dibatalkan.")) return;
+    onChange(items.filter(x=>x.id!==it.id));
+  };
+  const copyText = (text, id)=>{
+    const done = ()=>{ setCopiedId(id); setTimeout(()=>setCopiedId(c=>c===id?null:c), 2000); };
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done).catch(()=>window.prompt("Salin pesan ini:", text)); }
+    else window.prompt("Salin pesan ini:", text);
+  };
+
+  const q = search.trim().toLowerCase();
+  const rows = items.filter(it=>PART_TYPES[it.type]).map(it=>({it, al:ptAlerts(it)})).filter(r=>{
+    if(filter==="aksi" && !r.al.length) return false;
+    if(filter==="aktif" && ptIsDone(r.it)) return false;
+    if(filter==="selesai" && !ptIsDone(r.it)) return false;
+    if(q){ const hay = [r.it.isNo,r.it.customer,r.it.partNo,r.it.desc,r.it.ref,r.it.branch].join(" ").toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  }).sort((a,b)=>{
+    const da = ptIsDone(a.it), db = ptIsDone(b.it);
+    if(da!==db) return da?1:-1;
+    if(da) return ptLastDate(b.it).localeCompare(ptLastDate(a.it));
+    const sa = a.al.reduce((m,x)=>Math.max(m,x.sev),0), sb = b.al.reduce((m,x)=>Math.max(m,x.sev),0);
+    if(sa!==sb) return sb-sa;
+    return (a.it.eta||"9999").localeCompare(b.it.eta||"9999");
+  });
+
+  return (
+    <React.Fragment>
+      <h2 className="section" style={{marginTop:0}}>Tracking Part: Indent, Cabang, BO</h2>
+      <div className="extract-note" style={{marginTop:0}}>Catat part yang sedang ditunggu, lengkap dengan No. IS-nya, supaya kelihatan sudah sampai mana. Status yang telat atau perlu di-FU muncul sebagai notifikasi di bagian atas aplikasi setiap kali dibuka.</div>
+
+      {loadErr && <div className="import-banner"><div className="msg" style={{color:"var(--red)",marginBottom:0}}>Data tracking part belum berhasil dimuat dari Cloud, jadi input dikunci dulu supaya data lama tidak tertimpa. Coba muat ulang halaman. Detail: {loadErr}</div></div>}
+
+      <div className="stat-row">
+        <div className="stat"><div className="num">{sum.aktif}</div><div className="lbl">Part Aktif</div></div>
+        <div className="stat"><div className="num">{sum.tiba}</div><div className="lbl">Sudah Tiba</div></div>
+        <div className="stat"><div className="num">{sum.telat+sum.fu}</div><div className="lbl">Telat / Perlu FU</div></div>
+        <div className="stat"><div className="num">{sum.selesai}</div><div className="lbl">Selesai</div></div>
+      </div>
+
+      <div className="signer-card no-print" style={{marginBottom:20}}>
+        <div className="type-toggle" style={{marginBottom:10}}>
+          {Object.keys(PART_TYPES).map(k=>(
+            <div key={k} className={"type-btn"+(fType===k?(k==="bo"?" active-visit":" active-call"):"")} onClick={()=>setFType(k)}>{PART_TYPES[k].label}</div>
+          ))}
+        </div>
+        <p className="pt-form-note">{T.hint}</p>
+        <div className="logform">
+          <div><label>{T.numLabel}</label><input type="text" value={fIS} onChange={e=>setFIS(e.target.value)} placeholder={fType==="bo" ? "nomor BO / emergency (opsional)" : "contoh: IS00841"} /></div>
+          <div><label>Customer</label><input type="text" list="ptCustList" value={fCust} onChange={e=>setFCust(e.target.value)} placeholder="nama customer" />
+            <datalist id="ptCustList">{(customers||[]).map((c,i)=><option key={i} value={c.name} />)}</datalist></div>
+          <div><label>No. Part</label><input type="text" value={fPartNo} onChange={e=>setFPartNo(e.target.value)} /></div>
+          <div><label>Deskripsi</label><input type="text" value={fDesc} onChange={e=>setFDesc(e.target.value)} /></div>
+          <div><label>Qty</label><input type="text" value={fQty} onChange={e=>setFQty(e.target.value)} /></div>
+          {fType==="cabang" ? (
+            <div><label>Cabang Pengirim</label>
+              <select value={fBranch} onChange={e=>setFBranch(e.target.value)}><option value="">Pilih cabang</option>{branchOpts.map(b=><option key={b} value={b}>{b}</option>)}</select></div>
+          ) : (
+            <div><label>No. PR / PQ / Ref (opsional)</label><input type="text" value={fRef} onChange={e=>setFRef(e.target.value)} /></div>
+          )}
+          {fType==="cabang" && <div><label>No. PR / PQ / Ref (opsional)</label><input type="text" value={fRef} onChange={e=>setFRef(e.target.value)} /></div>}
+          <div><label>Tanggal Order</label><input type="date" value={fDate} onChange={e=>setFDate(e.target.value)} /></div>
+          <div><label>Estimasi Tiba / ETA (opsional)</label><input type="date" value={fEta} onChange={e=>setFEta(e.target.value)} /></div>
+        </div>
+        <button type="button" className="add-btn" onClick={add} disabled={!ready} style={!ready?{opacity:.5,cursor:"not-allowed"}:null}>Simpan Part</button>
+        {msg && <div style={{color:msg.e?"var(--red)":"var(--green)",fontFamily:"var(--sans)",fontWeight:600,fontSize:12.5,marginTop:10}}>{msg.t}</div>}
+      </div>
+
+      <div className="tabs" style={{flexWrap:"wrap"}}>
+        {[["aktif","Aktif"],["aksi","Perlu Aksi ("+sum.aksi+")"],["selesai","Selesai"],["semua","Semua"]].map(f=>(
+          <div key={f[0]} className={"tab-btn"+(filter===f[0]?" on":"")} onClick={()=>setFilter(f[0])}>{f[1]}</div>
+        ))}
+      </div>
+      <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari No. IS, customer, atau part..." style={{marginBottom:14}} />
+
+      {rows.length===0 && <div className="empty">{items.length===0 ? "Belum ada part yang dicatat." : "Tidak ada part yang cocok dengan filter ini."}</div>}
+
+      {rows.map(({it,al})=>{
+        const T2 = PART_TYPES[it.type]; const done = ptIsDone(it);
+        const sev = al.reduce((m,x)=>Math.max(m,x.sev),0);
+        const arrived = !done && it.stage===T2.stages.length-2;
+        const grp = groupOf(it);
+        const nextLabel = !done ? T2.stages[it.stage+1] : "";
+        const hist = it.history||[];
+        return (
+          <div key={it.id} className={"pt-card "+(done?"done":"al"+sev)}>
+            <div className="pt-head">
+              <span className={"pt-tag "+it.type}>{T2.short}</span>
+              {it.isNo ? <span className="pt-is">{it.isNo}</span> : (it.type==="bo" ? <span className="pt-noIS">No. BO belum diisi, FU manual</span> : <span className="pt-noIS">IS belum ada</span>)}
+              {grp.length>0 && <span className="meta" style={{fontSize:11,color:"var(--muted)"}}>+{grp.length} part lain di nomor ini</span>}
+            </div>
+            <div className="pt-cust">{it.customer}</div>
+            <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}</div>
+            <div className="pt-steps">{T2.stages.map((s,i)=><div key={i} title={s} className={"pt-step"+(i<it.stage?" past":"")+(i===it.stage?" now":"")} />)}</div>
+            <div className="pt-stage">{T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
+            {al.length>0 && <div className="pt-chips">{al.map((a,i)=><span key={i} className={"pt-chip"+(a.k==="tiba"?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
+
+            <div className="pt-actions no-print">
+              {!done && <button type="button" className="icon-btn" onClick={()=>quickAdvance(it)}>{it.stage+1===T2.stages.length-1 ? "Sudah diserahkan" : "Maju: "+nextLabel}{grp.length>0?" ("+(grp.length+1)+" part)":""}</button>}
+              {!done && <button type="button" className="icon-btn" onClick={()=>upId===it.id?setUpId(null):openUpdate(it)}>Update / Catat FU</button>}
+              {!done && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,false), it.id)}>{copiedId===it.id?"Tersalin":"Salin pesan FU"}</button>}
+              {arrived && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,true), it.id+"c")}>{copiedId===it.id+"c"?"Tersalin":"Salin info ke customer"}</button>}
+              <button type="button" className="icon-btn" onClick={()=>setHistId(histId===it.id?null:it.id)}>Riwayat ({hist.length})</button>
+              <button type="button" className="icon-btn danger" onClick={()=>remove(it)}>Hapus</button>
+            </div>
+
+            {upId===it.id && !done && (
+              <div className="pt-panel">
+                <div className="logform">
+                  <div><label>Status</label><select value={uStage} onChange={e=>setUStage(Number(e.target.value))}>{T2.stages.map((s,i)=><option key={i} value={i}>{s}</option>)}</select></div>
+                  <div><label>Tanggal</label><input type="date" value={uDate} onChange={e=>setUDate(e.target.value)} /></div>
+                  <div><label>{T2.numLabel}</label><input type="text" value={uIS} onChange={e=>setUIS(e.target.value)} placeholder={it.type==="bo" ? "nomor BO / emergency" : "contoh: IS00841"} /></div>
+                  <div><label>ETA</label><input type="date" value={uEta} onChange={e=>setUEta(e.target.value)} /></div>
+                  <div className="full"><label>Catatan update (hasil FU, posisi barang, dll)</label><input type="text" value={uNote} onChange={e=>setUNote(e.target.value)} placeholder="contoh: sudah FU Jakarta, barang masih packing" /></div>
+                  <div><label>Customer</label><input type="text" value={uCust} onChange={e=>setUCust(e.target.value)} /></div>
+                  <div><label>No. Part</label><input type="text" value={uPartNo} onChange={e=>setUPartNo(e.target.value)} /></div>
+                  <div><label>Deskripsi</label><input type="text" value={uDesc} onChange={e=>setUDesc(e.target.value)} /></div>
+                  <div><label>Qty</label><input type="text" value={uQty} onChange={e=>setUQty(e.target.value)} /></div>
+                </div>
+                {grp.length>0 && (
+                  <label style={{textTransform:"none",letterSpacing:0,fontSize:12,display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+                    <input type="checkbox" checked={uAll} onChange={e=>setUAll(e.target.checked)} style={{width:"auto"}} />
+                    Terapkan status dan No. IS ke {grp.length} part lain yang satu nomor dan tahapnya sama
+                  </label>
+                )}
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <button type="button" className="export-btn" onClick={()=>saveUpdate(it)}>Simpan Update</button>
+                  <button type="button" className="icon-btn" onClick={()=>setUpId(null)}>Batal</button>
+                </div>
+              </div>
+            )}
+
+            {histId===it.id && (
+              <div className="pt-hist">
+                {hist.slice().reverse().map((h,i)=>(
+                  <div key={i}><b>{ptFmt(h.date)}</b> {T2.stages[h.stage]||"-"}{h.note ? <span className="m"> | {h.note}</span> : null}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </React.Fragment>
+  );
+}
+
 function MainApp({onDisconnect, binId}){
   const CLOUD_CONFIG_KEYS = ["tracker_jsonbin_key","tracker_jsonbin_bin","tracker_cloud_url"];
   const [legacyKeys,setLegacyKeys] = useState([]);
@@ -1240,6 +1574,31 @@ function MainApp({onDisconnect, binId}){
   const [entriesExpanded,setEntriesExpanded] = useState(false);
   const [entriesSearch,setEntriesSearch] = useState("");
   const [mainView,setMainView] = useState("input");
+
+  // ===== Tracking Part (Indent / Stock Cabang / BO) =====
+  const [partItems,setPartItems] = useState([]);
+  const [partReady,setPartReady] = useState(false);
+  const [partLoadErr,setPartLoadErr] = useState("");
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const r = await window.storage.get("part_tracking_v1");
+        const a = JSON.parse(r.value);
+        setPartItems(Array.isArray(a) ? a : []);
+        setPartReady(true);
+      }catch(e){
+        const m = e && e.message ? e.message : String(e);
+        if(m==="not found"){ setPartReady(true); } // belum pernah ada data part, wajar
+        else setPartLoadErr(m);
+      }
+    })();
+  },[]);
+  const persistParts = async(next)=>{
+    if(!partReady) return;
+    setPartItems(next);
+    try{ await window.storage.set("part_tracking_v1", JSON.stringify(next)); }
+    catch(e){ setErr("Gagal menyimpan tracking part. Detail: " + (e && e.message ? e.message : String(e))); }
+  };
 
   // ===== Quotation Builder =====
   const [quoFormat,setQuoFormat] = useState("ais"); // "ais" | "manual"
@@ -3066,6 +3425,7 @@ function MainApp({onDisconnect, binId}){
   })();
   const fuList = Object.values(quotationsByKey).flat().filter(quoNeedsFu)
     .sort((a,b)=> workdaysSince(quoFuBase(b)) - workdaysSince(quoFuBase(a)));
+  const ptSum = ptSummary(partItems);
   const bulkInfo = computeBulk(bulkCutoff);
   const fuDraftQ = fuDraftId ? findQuotationById(fuDraftId) : null;
   const fuDraft = fuDraftQ ? buildFuDraft(fuDraftQ) : null;
@@ -3729,10 +4089,21 @@ function MainApp({onDisconnect, binId}){
         </div>
       )}
 
+      {ptSum.aksi>0 && mainView!=="parts" && (
+        <div className="pace-banner behind no-print" style={{cursor:"pointer"}} onClick={()=>setMainView("parts")}>
+          <strong>Tracking Part:</strong> {[
+            ptSum.tiba>0 ? ptSum.tiba+" part sudah tiba, belum diserahkan ke customer" : null,
+            ptSum.telat>0 ? ptSum.telat+" part ETA-nya lewat" : null,
+            ptSum.fu>0 ? ptSum.fu+" part perlu di-FU" : null,
+            ptSum.noIS>0 ? ptSum.noIS+" part belum ada No. IS" : null
+          ].filter(Boolean).join(", ")}. Klik untuk buka.
+        </div>
+      )}
       <div className="maintabs">
         <div className={"maintab-btn"+(mainView==="input"?" on":"")} onClick={()=>setMainView("input")}>📝 Input & Kuartal</div>
         <div className={"maintab-btn"+(mainView==="report"?" on":"")} onClick={()=>setMainView("report")}>📊 Laporan Tahunan {year}</div>
         <div className={"maintab-btn"+(mainView==="quotation"?" on":"")} onClick={()=>setMainView("quotation")}>🧾 Buat Penawaran{fuList.length>0 ? " ("+fuList.length+" FU)" : ""}</div>
+        <div className={"maintab-btn"+(mainView==="parts"?" on":"")} onClick={()=>setMainView("parts")}>📦 Tracking Part{ptSum.aksi>0 ? " ("+ptSum.aksi+")" : ""}</div>
         <div className={"maintab-btn"+(mainView==="faq"?" on":"")} onClick={()=>setMainView("faq")}>❓ Panduan</div>
         <div className={"maintab-btn"+(mainView==="settings"?" on":"")} onClick={()=>setMainView("settings")}>⚙️ Pengaturan</div>
       </div>
@@ -5166,6 +5537,10 @@ function MainApp({onDisconnect, binId}){
         </React.Fragment>
       )}
 
+      {mainView==="parts" && (
+        <PartTracker items={partItems} ready={partReady} loadErr={partLoadErr} onChange={persistParts} customers={customers} />
+      )}
+
       {mainView==="settings" && (
         <React.Fragment>
           <h2 className="section" style={{marginTop:0}}>Pengaturan Tracker VCS {helpBtn("umum")}</h2>
@@ -5185,6 +5560,11 @@ function MainApp({onDisconnect, binId}){
       {mainView==="faq" && (
         <React.Fragment>
           <h2 className="section" style={{marginTop:0}}>Panduan Pemakaian Tracker VCS</h2>
+
+          <div className="faq-item">
+            <h3>Bagaimana cara pakai menu Tracking Part?</h3>
+            <p>Pilih jenis part: Indent (lewat Jakarta dulu, ada No. IS), Stock Cabang (dikirim cabang lain, ada No. IS), atau BO / Emergency (punya nomor sendiri, bukan No. IS, jadi harus di-FU langsung). Isi customer dan part, lalu update statusnya tiap ada kabar lewat tombol Maju atau Update. Part yang sudah tiba tapi belum diserahkan, ETA-nya lewat, atau lama tanpa update akan muncul sebagai notifikasi di bagian atas aplikasi. Satu No. IS bisa berisi banyak part, jadi statusnya bisa diperbarui sekaligus. Tombol Salin pesan FU menyiapkan pesan WA untuk menanyakan posisi barang.</p>
+          </div>
 
           <div className="faq-item">
             <h3>Bagaimana cara kerja tracker ini?</h3>
