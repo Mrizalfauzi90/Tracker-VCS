@@ -957,13 +957,24 @@ function ptWorkdaysSince(dateStr){
 }
 function ptDaysBetween(a,b){ return Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); }
 function ptLastDate(it){ const h=it.history||[]; return h.length ? h.map(x=>x.date).sort().slice(-1)[0] : (it.orderDate||""); }
-// Alasan sebuah part perlu perhatian. sev 3 = sudah tiba (belum diserahkan), 2 = ETA lewat, 1 = perlu FU / lengkapi IS
-function ptAlerts(it){
+const ptAddDays = (d,n)=>{ const x=new Date(d+"T00:00:00"); x.setDate(x.getDate()+n); return localISO(x); };
+const ptPreDeal = it => it.dealStatus==="quo";
+// Alasan sebuah part perlu perhatian. sev 3 = harus segera bertindak, 2 = ETA lewat, 1 = perlu FU / lengkapi data
+// qmap = {no penawaran: status penawaran di Tracker (open/deal/lost/arsip)}
+function ptAlerts(it, qmap){
   const T = PART_TYPES[it.type]; if(!T || ptIsDone(it)) return [];
   const out = []; const today = localISO(); const last = T.stages.length-1;
+  const pre = ptPreDeal(it);
+  const qs = (it.quoNo && qmap) ? qmap[String(it.quoNo).trim()] : "";
+  if(pre && it.stage===0){
+    if(qs==="deal") out.push({k:"deal", sev:3, text:"Penawaran "+it.quoNo+" sudah DEAL, "+(it.type==="cabang" ? "segera minta stock dikirim ke Cilegon" : "segera proses indent ke Jakarta")});
+    else if(qs==="lost" || qs==="arsip") out.push({k:"lost", sev:1, text:"Penawaran "+it.quoNo+" berstatus "+(qs==="lost"?"Lost":"Arsip")+", hapus catatan ini kalau tidak jadi"});
+    else if(it.type==="cabang") out.push({k:"cabangDulu", sev:1, text:"Stock ada di "+(it.branch||"cabang")+": bisa minta kirim ke Cilegon dulu sebelum PO supaya lebih cepat"});
+    return out;
+  }
   if(it.stage===last-1){
     const n = ptWorkdaysSince(ptLastDate(it));
-    out.push({k:"tiba", sev:3, text: n>0 ? "Sudah tiba "+n+" hari kerja, belum diserahkan ke customer" : "Sudah tiba di Cilegon, belum diserahkan ke customer"});
+    out.push({k:"tiba", sev:3, text: pre ? "Sudah tiba di Cilegon, PO customer belum masuk: FU PO" : (n>0 ? "Sudah tiba "+n+" hari kerja, belum diserahkan ke customer" : "Sudah tiba di Cilegon, belum diserahkan ke customer")});
     return out;
   }
   if(it.eta && it.eta<today) out.push({k:"telat", sev:2, text:"ETA lewat "+ptDaysBetween(it.eta,today)+" hari"});
@@ -973,17 +984,36 @@ function ptAlerts(it){
   if(T.isFrom!=null && it.stage>=T.isFrom && !it.isNo) out.push({k:"noIS", sev:1, text:"No. IS belum diisi"});
   return out;
 }
-function ptSummary(items){
-  const s = {aktif:0, tiba:0, telat:0, fu:0, noIS:0, aksi:0, selesai:0};
+function ptSummary(items, qmap){
+  const s = {aktif:0, tiba:0, telat:0, fu:0, noIS:0, deal:0, cabangDulu:0, lost:0, aksi:0, selesai:0};
   (items||[]).forEach(it=>{
     if(!PART_TYPES[it.type]) return;
     if(ptIsDone(it)){ s.selesai++; return; }
     s.aktif++;
-    const al = ptAlerts(it);
+    const al = ptAlerts(it, qmap);
     if(al.length) s.aksi++;
     al.forEach(a=>{ if(s[a.k]!=null) s[a.k]++; });
   });
   return s;
+}
+// Ambil part indent / stock cabang dari data penawaran (info stock yang diisi di Buat Penawaran)
+function ptExtractFromQuotation(q){
+  const rows = (q && (q.format==="ais" ? q.aisRows : q.spareParts)) || [];
+  const out = [];
+  rows.forEach(r=>{
+    if(!r || !String(r.desc||"").trim()) return;
+    const parts = String(r.desc).split(",");
+    const partNo = (parts[0]||"").trim().toUpperCase();
+    const desc = parts.slice(1).join(",").trim();
+    getStocks(r).forEach(e=>{
+      if(!e || !e.loc || e.loc==="LAIN" || /cilegon/i.test(e.loc)) return;
+      const qty = String(e.qty||"").replace(/\D/g,"") || String(r.qty||"").replace(/\D/g,"");
+      const days = String(e.days||"").replace(/\D/g,"");
+      if(e.loc==="INDENT") out.push({type:"indent", partNo, desc, qty, leadDays:days, origin:String(e.detail||"").trim(), branch:"Jakarta"});
+      else out.push({type:"cabang", partNo, desc, qty, leadDays:days, origin:"", branch:e.loc});
+    });
+  });
+  return out;
 }
 function ptBuildFu(it, toCustomer){
   const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
@@ -993,6 +1023,7 @@ function ptBuildFu(it, toCustomer){
   }
   const what = it.type==="bo" ? ("BO emergency"+(it.isNo ? " "+it.isNo : "")) : (it.isNo ? "pengiriman "+it.isNo : ( (it.type==="indent" ? "order indent" : "request part ke cabang")));
   const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", "- Part: "+part, "- Customer: "+it.customer];
+  if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
   if(it.ref) lines.push("- Ref: "+it.ref);
   if(it.type==="cabang" && it.branch) lines.push("- Asal: "+it.branch);
   if(it.eta) lines.push("- ETA sebelumnya: "+ptFmt(it.eta));
@@ -1000,7 +1031,24 @@ function ptBuildFu(it, toCustomer){
   return lines.join("\n");
 }
 
-function PartTracker({items, ready, loadErr, onChange, customers}){
+// Pesan untuk memulai proses: indent (setelah deal) atau minta stock cabang dikirim ke Cilegon (boleh sebelum PO)
+function ptBuildOrderMsg(it){
+  const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
+  const part = ((it.partNo||"")+" "+(it.desc||"")).trim() + (it.qty ? " (qty "+it.qty+")" : "");
+  if(it.type==="cabang"){
+    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", "- Part: "+part, "- Customer: "+it.customer];
+    if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
+    lines.push("", "Mohon info No. IS-nya kalau sudah terbit ya.", "Terimakasih.");
+    return lines.join("\n");
+  }
+  const lines = ["Selamat "+sapa+",", "Penawaran "+(it.quoNo||"")+" untuk "+it.customer+" sudah deal. Mohon dibantu proses indent:", "- Part: "+part];
+  if(it.origin) lines.push("- Asal indent: "+it.origin);
+  if(it.leadDays) lines.push("- Estimasi di penawaran: "+it.leadDays+" hari");
+  lines.push("", "Mohon info No. IS dan estimasi tibanya di Cilegon setelah diproses ya.", "Terimakasih.");
+  return lines.join("\n");
+}
+
+function PartTracker({items, ready, loadErr, onChange, customers, quotations, qmap}){
   const today = localISO();
   const [fType,setFType] = useState("indent");
   const [fIS,setFIS] = useState("");
@@ -1028,10 +1076,19 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
   const [uQty,setUQty] = useState("");
   const [uAll,setUAll] = useState(true);
   const [copiedId,setCopiedId] = useState(null);
+  const [fQuo,setFQuo] = useState("");
+  const [fDeal,setFDeal] = useState("deal");
+  const [fLead,setFLead] = useState("");
+  const [uQuo,setUQuo] = useState("");
+  const [uLead,setULead] = useState("");
+  const [selQuoId,setSelQuoId] = useState("");
 
   const T = PART_TYPES[fType];
   const branchOpts = BERCA_BRANCHES_TOP.concat(BERCA_BRANCHES.filter(b=>BERCA_BRANCHES_TOP.indexOf(b)<0)).filter(b=>b!=="Cilegon");
-  const sum = ptSummary(items);
+  const sum = ptSummary(items, qmap);
+  const quoList = (quotations||[]).filter(q=>q && q.docNo);
+  const quoCands = quoList.map(q=>({q, c:ptExtractFromQuotation(q)})).filter(x=>x.c.length>0).sort((a,b)=>String(b.q.docDate||"").localeCompare(String(a.q.docDate||""))).slice(0,60);
+  const selQuo = quoCands.find(x=>String(x.q.id)===String(selQuoId)) || null;
 
   const add = ()=>{
     if(!ready) return;
@@ -1044,25 +1101,59 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
       id:"pt"+Date.now()+Math.floor(Math.random()*1000), type:fType, isNo:is, customer:cust,
       partNo:fPartNo.trim().toUpperCase(), desc:fDesc.trim(), qty:fQty.trim(),
       branch: fType==="indent" ? "Jakarta" : (fType==="cabang" ? fBranch : ""),
-      ref:fRef.trim(), orderDate:fDate||today, eta:fEta||"", stage:0,
+      ref:fRef.trim(), quoNo:fQuo.trim(), dealStatus: (fType==="bo" ? "deal" : fDeal), leadDays: fType==="indent" ? String(fLead||"").replace(/\D/g,"") : "",
+      orderDate:fDate||today, eta:fEta||"", stage:0,
       history:[{date:fDate||today, stage:0, note:"Dicatat"}], createdAt:new Date().toISOString()
     };
     onChange([it, ...items]);
     // customer, jenis, IS, cabang tetap terisi supaya bisa langsung input part berikutnya di IS yang sama
-    setFPartNo(""); setFDesc(""); setFQty("");
+    setFPartNo(""); setFDesc(""); setFQty(""); setFLead("");
     const warn = (is && fType!=="bo" && !/^IS\d{4,}$/.test(is)) ? " Format No. IS tidak seperti biasanya (contoh IS00841), mohon dicek lagi." : "";
-    setMsg({e:false,t:"Part tersimpan. Customer dan No. IS dibiarkan terisi untuk input part berikutnya." + warn});
+    setMsg({e:false,t:"Part tersimpan. Customer, No. IS, dan No. Penawaran dibiarkan terisi untuk input part berikutnya." + warn});
   };
 
+  // Indent mulai diproses = otomatis dianggap deal; ETA dihitung dari estimasi hari di penawaran
+  const ptStartProcess = (oldIt, b, date)=>{
+    if(oldIt.type==="indent" && oldIt.stage===0 && b.stage>=1){
+      b.dealStatus = "deal";
+      if(!b.eta && b.leadDays) b.eta = ptAddDays(date||today, Number(b.leadDays));
+    }
+    return b;
+  };
+  const markDeal = it=>{
+    onChange(items.map(x=> x.id===it.id ? {...x, dealStatus:"deal", dealDate:today, history:[...(x.history||[]), {date:today, stage:x.stage, note:"PO / deal masuk"}]} : x));
+  };
   const groupOf = it => (it.isNo && !ptIsDone(it)) ? items.filter(x=>x.id!==it.id && x.isNo===it.isNo && x.type===it.type && x.stage===it.stage) : [];
   const applyStage = (ids, stage, note, date, extraFn)=>{
-    const next = items.map(x=> ids.indexOf(x.id)>=0 ? {...x, ...(extraFn?extraFn(x):{}), stage, history:[...(x.history||[]), {date, stage, note:note||""}]} : x);
+    const next = items.map(x=>{
+      if(ids.indexOf(x.id)<0) return x;
+      let b = {...x, ...(extraFn?extraFn(x):{}), stage, history:[...(x.history||[]), {date, stage, note:note||""}]};
+      b = ptStartProcess(x, b, date);
+      return b;
+    });
     onChange(next);
   };
   const openUpdate = (it, stage)=>{
     setUpId(it.id); setUStage(stage!=null?stage:it.stage); setUDate(today); setUNote("");
-    setUIS(it.isNo||""); setUEta(it.eta||""); setUCust(it.customer||""); setUPartNo(it.partNo||""); setUDesc(it.desc||""); setUQty(it.qty||"");
+    setUIS(it.isNo||""); setUEta(it.eta||""); setUCust(it.customer||""); setUPartNo(it.partNo||""); setUDesc(it.desc||""); setUQty(it.qty||""); setUQuo(it.quoNo||""); setULead(it.leadDays||"");
     setUAll(true);
+  };
+  const importQuo = ()=>{
+    if(!ready || !selQuo) return;
+    const q = selQuo.q; const st = qmap ? qmap[String(q.docNo).trim()] : "";
+    const isDeal = st==="deal";
+    const exists = x => items.some(y=>y.quoNo===q.docNo && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
+    const fresh = selQuo.c.filter(x=>!exists(x));
+    if(!fresh.length){ setMsg({e:true,t:"Semua part dari penawaran ini sudah ada di Tracking Part."}); return; }
+    const made = fresh.map((x,i)=>({
+      id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, isNo:"", customer:q.customerName||"",
+      partNo:x.partNo, desc:x.desc, qty:x.qty, branch:x.branch, origin:x.origin, ref:q.prNo||"", quoNo:q.docNo,
+      dealStatus: isDeal ? "deal" : "quo", leadDays:x.leadDays, orderDate:today, eta:"", stage:0,
+      history:[{date:today, stage:0, note:"Diambil dari penawaran "+q.docNo}], createdAt:new Date().toISOString()
+    }));
+    onChange([...made, ...items]);
+    setSelQuoId("");
+    setMsg({e:false,t:made.length+" part dari penawaran "+q.docNo+" masuk ke Tracking Part."+(isDeal ? " Penawaran ini sudah DEAL, jadi langsung proses indent atau minta stock cabang dikirim." : " Status: menunggu PO.")+(fresh.length<selQuo.c.length ? " (sebagian sudah ada, dilewati)" : "")});
   };
   const quickAdvance = it=>{
     const T2 = PART_TYPES[it.type]; const ns = it.stage+1;
@@ -1078,9 +1169,10 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
     const ids = [it.id].concat(grp.map(x=>x.id));
     const next = items.map(x=>{
       if(ids.indexOf(x.id)<0) return x;
-      const base = {...x, stage:uStage, history:[...(x.history||[]), {date:uDate||today, stage:uStage, note:uNote.trim()}]};
+      let base = {...x, stage:uStage, history:[...(x.history||[]), {date:uDate||today, stage:uStage, note:uNote.trim()}]};
+      base = ptStartProcess(x, base, uDate||today);
       if(is) base.isNo = is;
-      if(x.id===it.id){ base.eta = uEta||""; base.customer = uCust.trim()||x.customer; base.partNo = uPartNo.trim().toUpperCase(); base.desc = uDesc.trim(); base.qty = uQty.trim(); }
+      if(x.id===it.id){ base.eta = uEta||""; base.customer = uCust.trim()||x.customer; base.partNo = uPartNo.trim().toUpperCase(); base.desc = uDesc.trim(); base.qty = uQty.trim(); base.quoNo = uQuo.trim(); if(x.type==="indent") base.leadDays = String(uLead||"").replace(/\D/g,""); }
       else if(uEta){ base.eta = uEta; }
       return base;
     });
@@ -1098,7 +1190,7 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
   };
 
   const q = search.trim().toLowerCase();
-  const rows = items.filter(it=>PART_TYPES[it.type]).map(it=>({it, al:ptAlerts(it)})).filter(r=>{
+  const rows = items.filter(it=>PART_TYPES[it.type]).map(it=>({it, al:ptAlerts(it,qmap)})).filter(r=>{
     if(filter==="aksi" && !r.al.length) return false;
     if(filter==="aktif" && ptIsDone(r.it)) return false;
     if(filter==="selesai" && !ptIsDone(r.it)) return false;
@@ -1142,19 +1234,46 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
           <div><label>No. Part</label><input type="text" value={fPartNo} onChange={e=>setFPartNo(e.target.value)} /></div>
           <div><label>Deskripsi</label><input type="text" value={fDesc} onChange={e=>setFDesc(e.target.value)} /></div>
           <div><label>Qty</label><input type="text" value={fQty} onChange={e=>setFQty(e.target.value)} /></div>
-          {fType==="cabang" ? (
+          {fType==="cabang" && (
             <div><label>Cabang Pengirim</label>
               <select value={fBranch} onChange={e=>setFBranch(e.target.value)}><option value="">Pilih cabang</option>{branchOpts.map(b=><option key={b} value={b}>{b}</option>)}</select></div>
-          ) : (
-            <div><label>No. PR / PQ / Ref (opsional)</label><input type="text" value={fRef} onChange={e=>setFRef(e.target.value)} /></div>
           )}
-          {fType==="cabang" && <div><label>No. PR / PQ / Ref (opsional)</label><input type="text" value={fRef} onChange={e=>setFRef(e.target.value)} /></div>}
+          <div><label>No. Penawaran (opsional)</label><input type="text" list="ptQuoList" value={fQuo} onChange={e=>{ const v=e.target.value; setFQuo(v); const hit=quoList.find(q=>String(q.docNo).trim()===v.trim()); if(hit && !fCust.trim()) setFCust(hit.customerName||""); }} placeholder="contoh: 2602PQ06728" />
+            <datalist id="ptQuoList">{quoList.slice().sort((a,b)=>String(b.docDate||"").localeCompare(String(a.docDate||""))).slice(0,80).map((q,i)=><option key={i} value={q.docNo}>{q.customerName}</option>)}</datalist></div>
+          <div><label>No. PR / PO Customer (opsional)</label><input type="text" value={fRef} onChange={e=>setFRef(e.target.value)} /></div>
+          {fType!=="bo" && (
+            <div><label>Status Order</label>
+              <select value={fDeal} onChange={e=>setFDeal(e.target.value)}><option value="deal">Sudah deal / PO masuk</option><option value="quo">Masih penawaran (menunggu PO)</option></select></div>
+          )}
+          {fType==="indent" && <div><label>Estimasi indent (hari)</label><input type="text" value={fLead} onChange={e=>setFLead(e.target.value)} placeholder="contoh: 21" /></div>}
           <div><label>Tanggal Order</label><input type="date" value={fDate} onChange={e=>setFDate(e.target.value)} /></div>
           <div><label>Estimasi Tiba / ETA (opsional)</label><input type="date" value={fEta} onChange={e=>setFEta(e.target.value)} /></div>
         </div>
         <button type="button" className="add-btn" onClick={add} disabled={!ready} style={!ready?{opacity:.5,cursor:"not-allowed"}:null}>Simpan Part</button>
         {msg && <div style={{color:msg.e?"var(--red)":"var(--green)",fontFamily:"var(--sans)",fontWeight:600,fontSize:12.5,marginTop:10}}>{msg.t}</div>}
       </div>
+      </Panel>
+
+      <Panel id="pt_fromquo" defaultOpen={false} className="no-print" style={{marginBottom:20}} title="Ambil dari Penawaran" hint="(part indent / stock cabang di penawaran, klik untuk buka/tutup)">
+        <div className="signer-card" style={{marginTop:8}}>
+          <p className="pt-form-note">Pilih penawaran yang di Buat Penawaran-nya sudah diisi info Indent atau Stock cabang. Partnya langsung masuk ke tracking lengkap dengan No. Penawaran, customer, dan estimasi harinya.</p>
+          {quoCands.length===0 ? <div className="empty" style={{padding:"8px 0"}}>Belum ada penawaran tersimpan yang punya info indent atau stock cabang.</div> : (
+            <React.Fragment>
+              <select value={selQuoId} onChange={e=>setSelQuoId(e.target.value)} style={{marginBottom:10}}>
+                <option value="">Pilih penawaran</option>
+                {quoCands.map(x=><option key={x.q.id} value={x.q.id}>{x.q.docNo+" | "+(x.q.customerName||"-")+" | "+ptFmt(x.q.docDate)+" | "+(qmap&&qmap[String(x.q.docNo).trim()]==="deal"?"DEAL":"open")}</option>)}
+              </select>
+              {selQuo && (
+                <div className="pt-hist" style={{borderTop:"none",marginTop:0,paddingTop:0}}>
+                  {selQuo.c.map((x,i)=>(
+                    <div key={i}><b>{x.type==="indent" ? "Indent"+(x.origin?" "+x.origin:"") : "Stock "+x.branch}</b> {x.partNo} {x.desc}<span className="m"> | qty {x.qty||"-"}{x.leadDays?" | est. "+x.leadDays+" hari":""}</span></div>
+                  ))}
+                  <div style={{marginTop:10}}><button type="button" className="export-btn" disabled={!ready} onClick={importQuo}>Masukkan {selQuo.c.length} part ke Tracking</button></div>
+                </div>
+              )}
+            </React.Fragment>
+          )}
+        </div>
       </Panel>
 
       <div className="tabs" style={{flexWrap:"wrap"}}>
@@ -1186,12 +1305,14 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
               {grp.length>0 && <span className="meta" style={{fontSize:11,color:"var(--muted)"}}>+{grp.length} part lain di nomor ini</span>}
             </div>
             <div className="pt-cust">{it.customer}</div>
-            <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}</div>
+            <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
             <div className="pt-steps">{T2.stages.map((s,i)=><div key={i} title={s} className={"pt-step"+(i<it.stage?" past":"")+(i===it.stage?" now":"")} />)}</div>
             <div className="pt-stage">{T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
-            {al.length>0 && <div className="pt-chips">{al.map((a,i)=><span key={i} className={"pt-chip"+(a.k==="tiba"?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
+            {(al.length>0 || (ptPreDeal(it) && !done)) && <div className="pt-chips">{ptPreDeal(it) && !done && <span className="pt-chip">Menunggu PO</span>}{al.map((a,i)=><span key={i} className={"pt-chip"+((a.k==="tiba"||a.k==="deal")?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
 
             <div className="pt-actions no-print">
+              {!done && ptPreDeal(it) && <button type="button" className="icon-btn" onClick={()=>markDeal(it)}>Sudah deal / PO masuk</button>}
+              {!done && it.stage===0 && (it.type==="cabang" || it.type==="indent") && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildOrderMsg(it), it.id+"o")}>{copiedId===it.id+"o" ? "Tersalin" : (it.type==="cabang" ? "Salin pesan minta kirim stock" : "Salin pesan proses indent")}</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>quickAdvance(it)}>{it.stage+1===T2.stages.length-1 ? "Sudah diserahkan" : "Maju: "+nextLabel}{grp.length>0?" ("+(grp.length+1)+" part)":""}</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>upId===it.id?setUpId(null):openUpdate(it)}>Update / Catat FU</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,false), it.id)}>{copiedId===it.id?"Tersalin":"Salin pesan FU"}</button>}
@@ -1208,6 +1329,8 @@ function PartTracker({items, ready, loadErr, onChange, customers}){
                   <div><label>{T2.numLabel}</label><input type="text" value={uIS} onChange={e=>setUIS(e.target.value)} placeholder={it.type==="bo" ? "nomor BO / emergency" : "contoh: IS00841"} /></div>
                   <div><label>ETA</label><input type="date" value={uEta} onChange={e=>setUEta(e.target.value)} /></div>
                   <div className="full"><label>Catatan update (hasil FU, posisi barang, dll)</label><input type="text" value={uNote} onChange={e=>setUNote(e.target.value)} placeholder="contoh: sudah FU Jakarta, barang masih packing" /></div>
+                  <div><label>No. Penawaran</label><input type="text" value={uQuo} onChange={e=>setUQuo(e.target.value)} /></div>
+                  {it.type==="indent" && <div><label>Estimasi indent (hari)</label><input type="text" value={uLead} onChange={e=>setULead(e.target.value)} /></div>}
                   <div><label>Customer</label><input type="text" value={uCust} onChange={e=>setUCust(e.target.value)} /></div>
                   <div><label>No. Part</label><input type="text" value={uPartNo} onChange={e=>setUPartNo(e.target.value)} /></div>
                   <div><label>Deskripsi</label><input type="text" value={uDesc} onChange={e=>setUDesc(e.target.value)} /></div>
@@ -3435,7 +3558,9 @@ function MainApp({onDisconnect, binId}){
   })();
   const fuList = Object.values(quotationsByKey).flat().filter(quoNeedsFu)
     .sort((a,b)=> workdaysSince(quoFuBase(b)) - workdaysSince(quoFuBase(a)));
-  const ptSum = ptSummary(partItems);
+  const ptQuoList = Object.values(quotationsByKey).flat().filter(q=>q && q.docNo);
+  const ptQmap = {}; ptQuoList.forEach(q=>{ ptQmap[String(q.docNo).trim()] = quoStatus(q); });
+  const ptSum = ptSummary(partItems, ptQmap);
   const bulkInfo = computeBulk(bulkCutoff);
   const fuDraftQ = fuDraftId ? findQuotationById(fuDraftId) : null;
   const fuDraft = fuDraftQ ? buildFuDraft(fuDraftQ) : null;
@@ -4102,10 +4227,12 @@ function MainApp({onDisconnect, binId}){
       {ptSum.aksi>0 && mainView!=="parts" && (
         <div className="pace-banner behind no-print" style={{cursor:"pointer"}} onClick={()=>setMainView("parts")}>
           <strong>Tracking Part:</strong> {[
+            ptSum.deal>0 ? ptSum.deal+" part penawarannya sudah DEAL, segera diproses" : null,
             ptSum.tiba>0 ? ptSum.tiba+" part sudah tiba, belum diserahkan ke customer" : null,
             ptSum.telat>0 ? ptSum.telat+" part ETA-nya lewat" : null,
             ptSum.fu>0 ? ptSum.fu+" part perlu di-FU" : null,
-            ptSum.noIS>0 ? ptSum.noIS+" part belum ada No. IS" : null
+            ptSum.noIS>0 ? ptSum.noIS+" part belum ada No. IS" : null,
+            ptSum.cabangDulu>0 ? ptSum.cabangDulu+" part stock cabang bisa diminta kirim dulu" : null
           ].filter(Boolean).join(", ")}. Klik untuk buka.
         </div>
       )}
@@ -5548,7 +5675,7 @@ function MainApp({onDisconnect, binId}){
       )}
 
       {mainView==="parts" && (
-        <PartTracker items={partItems} ready={partReady} loadErr={partLoadErr} onChange={persistParts} customers={customers} />
+        <PartTracker items={partItems} ready={partReady} loadErr={partLoadErr} onChange={persistParts} customers={customers} quotations={ptQuoList} qmap={ptQmap} />
       )}
 
       {mainView==="settings" && (
@@ -5573,7 +5700,7 @@ function MainApp({onDisconnect, binId}){
 
           <div className="faq-item">
             <h3>Bagaimana cara pakai menu Tracking Part?</h3>
-            <p>Pilih jenis part: Indent (lewat Jakarta dulu, ada No. IS), Stock Cabang (dikirim cabang lain, ada No. IS), atau BO / Emergency (punya nomor sendiri, bukan No. IS, jadi harus di-FU langsung). Isi customer dan part, lalu update statusnya tiap ada kabar lewat tombol Maju atau Update. Part yang sudah tiba tapi belum diserahkan, ETA-nya lewat, atau lama tanpa update akan muncul sebagai notifikasi di bagian atas aplikasi. Satu No. IS bisa berisi banyak part, jadi statusnya bisa diperbarui sekaligus. Tombol Salin pesan FU menyiapkan pesan WA untuk menanyakan posisi barang.</p>
+            <p>Pilih jenis part: Indent (lewat Jakarta dulu, ada No. IS), Stock Cabang (dikirim cabang lain, ada No. IS), atau BO / Emergency (punya nomor sendiri, bukan No. IS, jadi harus di-FU langsung). Isi customer dan part, lalu update statusnya tiap ada kabar lewat tombol Maju atau Update. Part yang sudah tiba tapi belum diserahkan, ETA-nya lewat, atau lama tanpa update akan muncul sebagai notifikasi di bagian atas aplikasi. Satu No. IS bisa berisi banyak part, jadi statusnya bisa diperbarui sekaligus. Tombol Salin pesan FU menyiapkan pesan WA untuk menanyakan posisi barang. Part indent atau stock cabang yang sudah tercantum di penawaran bisa diambil lewat panel Ambil dari Penawaran, dan No. Penawaran tersambung ke tracking. Begitu penawarannya berstatus Deal, muncul notifikasi untuk segera memproses indent. Untuk stock yang ada di cabang, pesan minta kirim ke Cilegon bisa disalin dan dikirim sebelum PO supaya lebih cepat.</p>
           </div>
 
           <div className="faq-item">
