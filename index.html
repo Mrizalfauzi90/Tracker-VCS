@@ -736,6 +736,31 @@ function extractDocNo(text){
   if(m) return m[0].toUpperCase();
   return "";
 }
+// Pemisah Spare Parts vs Consumable/Commodity untuk penawaran manual dari PDF AIS.
+// AGC 87 = consumable (oli, grease, dst). AGC 88 = campuran consumable (oli, ban, aki) dan part lokal / fabrikasi, jadi dicek per deskripsi:
+// yang tidak terdeteksi sebagai consumable tetap masuk SPARE PARTS. Agency lain (24 MIT, 89 Lonking, dst) selalu Spare Parts.
+const CONS_AGC_ALWAYS = ["87"];
+const CONS_AGC_MIXED = ["88"];
+const CONS_TYRE_RE = /\b(?:TYRES?|TIRES?|BAN|INNER\s*TUBE|FLAP)\b/i;
+const CONS_BATT_RE = /\b(?:ACCU|AKI|BATTERY|BATERAI)\b/i;
+const CONS_LIQ_RE = /\b(?:OLI|OIL|GREASE|GEMUK|LUBE|LUBRICANTS?|COOLANT|FLUID|ATF|SAE|VG\s*\d+)\b|\b\d+\s*(?:LTR|LT|LITER|L)\b|-\d+L(?:TR|T)?\b/i;
+const CONS_NOT_LIQ_RE = /\b(?:FILTER|ELEMENT|SEAL|PUMP|HOSE|COOLER|RADIATOR|SEPARATOR|GASKET|SWITCH|SENSOR)\b/i;
+function classifyQuoPart(p){
+  const agc = String((p && p.agc) || "").replace(/\D/g,"");
+  const txt = String((p && p.desc) || "") + " " + String((p && p.partNo) || "");
+  if(CONS_AGC_ALWAYS.indexOf(agc)>=0) return "consumable";
+  if(CONS_AGC_MIXED.indexOf(agc)>=0){
+    if(CONS_TYRE_RE.test(txt) || CONS_BATT_RE.test(txt)) return "consumable";
+    if(CONS_LIQ_RE.test(txt) && !CONS_NOT_LIQ_RE.test(txt)) return "consumable";
+    return "spare";
+  }
+  return "spare";
+}
+function splitQuoPartsBySection(parts){
+  const cons = [], spare = [];
+  (parts||[]).forEach(p=> (classifyQuoPart(p)==="consumable" ? cons : spare).push(p));
+  return {spare, cons};
+}
 // Parser gabungan buat baca quotation PDF (dipakai baik oleh Data Penjualan maupun Buat Penawaran)
 function parseQuotationText(fullText){
   fullText = fullText.replace(/\bI\s*D\s*R\b/gi, "IDR");
@@ -815,7 +840,7 @@ function parseQuotationText(fullText){
   }
 
   let guessedModel = "";
-  const modelMatch = fullText.match(/\bMODEL[ \t]*:?[ \t]*(?!SERIAL\b|REMARKS\b|MERK\b|NO\b)([A-Z0-9\-]{2,20})/i);
+  const modelMatch = fullText.match(/\bMODEL[ \t]*:?[ \t]*(?!SERIAL\b|REMARKS\b|MERK\b|NO\b)([A-Z0-9\-]{2,20}(?:[ \t](?=[A-Z0-9\-]*\d)[A-Z0-9\-]{1,10})?)/i);
   if(modelMatch) guessedModel = modelMatch[1].trim().toUpperCase();
 
   let guessedSN = "";
@@ -849,7 +874,8 @@ function parseQuotationText(fullText){
         desc: descClean,
         qty: String(Number(m[5])||""),
         unitPrice: String(parseIDNumber(m[6])||""),
-        supersede: sup
+        supersede: sup,
+        agc: String(m[2]||"").replace(/\D/g,"")
       });
     }
   }
@@ -2582,7 +2608,7 @@ function MainApp({onDisconnect, binId}){
         let diffNote = "";
         if(R.guessedParts.length){
           // Isi tracker sebelumnya: baris dengan No. Part yang sama tetap membawa stock, remark, dan jenis supersede-nya
-          const curRows = (quoFormat==="ais" ? quoAisRows : quoSpareParts) || [];
+          const curRows = (quoFormat==="ais" ? quoAisRows : [...quoSpareParts, ...(splitQuoPartsBySection(R.guessedParts).cons.length ? quoConsumable : [])]) || [];
           const pnOf = r=> String(r.desc||"").split(",")[0].trim().toUpperCase();
           const oldByPn = {};
           curRows.forEach(r=>{ const k=pnOf(r); if(k) oldByPn[k]=r; });
@@ -2622,7 +2648,10 @@ function MainApp({onDisconnect, binId}){
           if(quoFormat==="ais"){
             setQuoAisRows(R.guessedParts.map(p=>({agc:"24", desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, supersede:p.supersede||"", ...carry(p)})));
           } else {
-            setQuoSpareParts(R.guessedParts.map(p=>({desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, remark:"", supersede:p.supersede||"", ...carry(p)})));
+            const toRow = p=>({desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, remark:"", supersede:p.supersede||"", ...carry(p)});
+            const sp = splitQuoPartsBySection(R.guessedParts);
+            setQuoSpareParts(sp.spare.length ? sp.spare.map(toRow) : [{desc:"", qty:"", unitPrice:"", remark:""}]);
+            if(sp.cons.length) setQuoConsumable(sp.cons.map(toRow)); // kalau PDF tidak ada consumable, isi Consumable yang sudah ada dibiarkan
           }
           mergePartsIntoCatalog(R.guessedParts, R.guessedDate);
         }
@@ -2633,11 +2662,18 @@ function MainApp({onDisconnect, binId}){
         if(R.guessedCustomer) foundParts.push("customer & alamat");
         if(R.guessedModel) foundParts.push("model");
         if(R.guessedSN) foundParts.push("serial number");
-        if(R.guessedParts.length) foundParts.push(`rincian part (${R.guessedParts.length} baris)`);
+        if(R.guessedParts.length){
+          if(quoFormat==="ais") foundParts.push(`rincian part (${R.guessedParts.length} baris)`);
+          else { const sp = splitQuoPartsBySection(R.guessedParts); foundParts.push(`rincian part (${R.guessedParts.length} baris: ${sp.spare.length} spare parts, ${sp.cons.length} consumable/commodity)`); }
+        }
         if(R.guessedDisc!=null) foundParts.push(`diskon ${R.guessedDisc}%`);
         if(R.guessedPpn!=null) foundParts.push(`PPN ${R.guessedPpn}%`);
         { const nSup = R.guessedParts.filter(p=>p.supersede).length;
           foundParts.push(nSup ? `supersede (${nSup} part)` : "supersede (tidak terdeteksi di PDF ini, isi manual kalau ada)"); }
+        if(quoFormat!=="ais" && R.guessedParts.length){
+          const sp = splitQuoPartsBySection(R.guessedParts);
+          if(sp.cons.length) diffNote += " Consumable/commodity dipisah otomatis: AGC 87 selalu Consumable, AGC 88 dicek dari deskripsi (oli, ban, aki = Consumable; part lokal/fabrikasi tetap di Spare Parts). Masuk Consumable: "+sp.cons.map(p=>p.partNo+" (AGC "+(p.agc||"-")+")").slice(0,8).join(", ")+(sp.cons.length>8?", dst":"")+". Kalau ada yang salah tempat, pindahkan manual.";
+        }
         setQuoPdfNote(foundParts.length
           ? `Berhasil menebak: ${foundParts.join(", ")} dari file "${file.name}". Mohon dicek ulang sebelum disimpan/export — file PDF-nya sendiri tidak ikut tersimpan.${diffNote}`
           : `Tidak berhasil menebak data dari "${file.name}". Silakan isi manual.`);
