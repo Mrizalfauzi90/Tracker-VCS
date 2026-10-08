@@ -1031,6 +1031,49 @@ function ptBuildFu(it, toCustomer){
   return lines.join("\n");
 }
 
+// Baca teks PDF penawaran buatan Tracker: ambil No. Penawaran, customer, PR, tanggal, dan part yang punya info Indent / Stock cabang
+function ptParseQuotationPdfText(text){
+  const lines = String(text||"").split("\n").map(l=>l.replace(/\s+/g," ").trim()).filter(Boolean);
+  const meta = {docNo:"", customerName:"", prNo:"", docDate:""};
+  const full = lines.join("\n");
+  let m = full.match(/DOCUMENT(?:\s*NO\.?)?\s*:\s*([0-9A-Z][0-9A-Z.\-\/]{4,24})/i); if(m) meta.docNo = m[1].toUpperCase();
+  m = full.match(/CUSTOMER\s*:\s*(.+?)(?:\s+PR\s*:|\s*$)/im); if(m) meta.customerName = m[1].trim().toUpperCase();
+  m = full.match(/\bPR\s*:\s*([0-9A-Z\-\/]+)/i); if(m) meta.prNo = m[1].trim();
+  m = full.match(/DOC\.?\s*DATE\s*:\s*(\d{2})\/(\d{2})\/(\d{4})/i); if(m) meta.docDate = m[3]+"-"+m[2]+"-"+m[1];
+  const PRICE = "\\d{1,3}(?:\\.\\d{3})+";
+  const tailRe = new RegExp("(?:^|\\s)(\\d+)\\s+"+PRICE+"\\s+"+PRICE);
+  const partRe = /^(?:\d{1,2}\s+)?([A-Z0-9][A-Z0-9\-\.\/]{3,24}),\s*(.+)$/i;
+  const stockRe = /([A-Za-z][A-Za-z .]*?):\s*(\d+)\s*pcs(?:\s*\(\s*est\.?\s*tiba\s*(\d+)\s*hari\s*\))?/gi;
+  const cands = []; let cur = null;
+  lines.forEach(line=>{
+    if(/^(SERVICE|CONSUMABLE|SCOPE PEKERJAAN)/i.test(line)) cur = null;
+    const pm = line.match(partRe);
+    if(pm && /\d/.test(pm[1]) && !/^(ADDRESS|REMARKS?|MERK|MODEL)\b/i.test(line)){
+      let desc = pm[2].replace(new RegExp("\\s+\\d+\\s+"+PRICE+"\\s+"+PRICE+".*$"), "").trim();
+      desc = desc.replace(/\s+P-\d{1,2}\b.*$/i, "").trim(); // buang sisa kolom Remark (contoh P-04 Hose) yang ikut satu baris
+      cur = {partNo:pm[1].toUpperCase(), desc, qty:""};
+    }
+    if(!cur) return;
+    const tm = line.match(tailRe);
+    if(tm && !cur.qty) cur.qty = tm[1];
+    if(/\b(Indent|Stock)\b[^:]*:\s*\d+\s*pcs/i.test(line)){
+      line.split(";").forEach(seg=>{
+        seg = seg.trim();
+        const isInd = /^Indent\b/i.test(seg);
+        const body = seg.replace(/^Stock\s+/i,"");
+        let mm; stockRe.lastIndex = 0;
+        while((mm = stockRe.exec(body))){
+          let name = mm[1].trim();
+          if(isInd){ const origin = name.replace(/^Indent\s*/i,"").trim(); cands.push({type:"indent", partNo:cur.partNo, desc:cur.desc, qtyRow:cur, qty:mm[2], leadDays:mm[3]||"", origin, branch:"Jakarta"}); }
+          else if(!/cilegon/i.test(name)) cands.push({type:"cabang", partNo:cur.partNo, desc:cur.desc, qtyRow:cur, qty:mm[2], leadDays:mm[3]||"", origin:"", branch:name});
+        }
+      });
+    }
+  });
+  cands.forEach(c=>{ if(!c.qty && c.qtyRow) c.qty = c.qtyRow.qty; delete c.qtyRow; });
+  return {meta, cands};
+}
+
 // Pesan untuk memulai proses: indent (setelah deal) atau minta stock cabang dikirim ke Cilegon (boleh sebelum PO)
 function ptBuildOrderMsg(it){
   const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
@@ -1082,6 +1125,8 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
   const [uQuo,setUQuo] = useState("");
   const [uLead,setULead] = useState("");
   const [selQuoId,setSelQuoId] = useState("");
+  const [quoInput,setQuoInput] = useState("");
+  const [pdfBusy,setPdfBusy] = useState(false);
 
   const T = PART_TYPES[fType];
   const branchOpts = BERCA_BRANCHES_TOP.concat(BERCA_BRANCHES.filter(b=>BERCA_BRANCHES_TOP.indexOf(b)<0)).filter(b=>b!=="Cilegon");
@@ -1138,22 +1183,53 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     setUIS(it.isNo||""); setUEta(it.eta||""); setUCust(it.customer||""); setUPartNo(it.partNo||""); setUDesc(it.desc||""); setUQty(it.qty||""); setUQuo(it.quoNo||""); setULead(it.leadDays||"");
     setUAll(true);
   };
-  const importQuo = ()=>{
-    if(!ready || !selQuo) return;
-    const q = selQuo.q; const st = qmap ? qmap[String(q.docNo).trim()] : "";
+  // Masukkan part indent / stock cabang hasil baca penawaran (dari Tracker atau dari PDF) ke tracking; part yang sudah ada dilewati
+  const importCands = (meta, cands)=>{
+    if(!ready) return null;
+    const docNo = String(meta.docNo||"").trim();
+    const st = qmap ? qmap[docNo] : "";
     const isDeal = st==="deal";
-    const exists = x => items.some(y=>y.quoNo===q.docNo && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
-    const fresh = selQuo.c.filter(x=>!exists(x));
-    if(!fresh.length){ setMsg({e:true,t:"Semua part dari penawaran ini sudah ada di Tracking Part."}); return; }
+    const exists = x => items.some(y=>y.quoNo===docNo && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
+    const fresh = cands.filter(x=>!exists(x));
+    if(!fresh.length){ setMsg({e:true,t:"Semua part indent / stock cabang dari penawaran "+docNo+" sudah ada di Tracking Part."}); return 0; }
     const made = fresh.map((x,i)=>({
-      id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, isNo:"", customer:q.customerName||"",
-      partNo:x.partNo, desc:x.desc, qty:x.qty, branch:x.branch, origin:x.origin, ref:q.prNo||"", quoNo:q.docNo,
+      id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, isNo:"", customer:meta.customerName||"",
+      partNo:x.partNo, desc:x.desc, qty:x.qty, branch:x.branch, origin:x.origin, ref:meta.prNo||"", quoNo:docNo,
       dealStatus: isDeal ? "deal" : "quo", leadDays:x.leadDays, orderDate:today, eta:"", stage:0,
-      history:[{date:today, stage:0, note:"Diambil dari penawaran "+q.docNo}], createdAt:new Date().toISOString()
+      history:[{date:today, stage:0, note:"Diambil dari penawaran "+docNo}], createdAt:new Date().toISOString()
     }));
     onChange([...made, ...items]);
-    setSelQuoId("");
-    setMsg({e:false,t:made.length+" part dari penawaran "+q.docNo+" masuk ke Tracking Part."+(isDeal ? " Penawaran ini sudah DEAL, jadi langsung proses indent atau minta stock cabang dikirim." : " Status: menunggu PO.")+(fresh.length<selQuo.c.length ? " (sebagian sudah ada, dilewati)" : "")});
+    const ind = made.filter(x=>x.type==="indent").length, cab = made.length-ind;
+    setMsg({e:false,t:made.length+" part dari penawaran "+docNo+" masuk ke Tracking Part ("+ind+" indent, "+cab+" stock cabang)."+(isDeal ? " Penawaran ini sudah DEAL, jadi langsung proses indent atau minta stock cabang dikirim." : " Status: menunggu PO.")+(fresh.length<cands.length ? " Sebagian sudah ada, dilewati." : "")});
+    return made.length;
+  };
+  const importQuo = ()=>{
+    if(!selQuo) return;
+    const q = selQuo.q;
+    if(importCands({docNo:q.docNo, customerName:q.customerName, prNo:q.prNo}, selQuo.c)) setSelQuoId("");
+  };
+  // Ketik / tempel No. Penawaran: kalau cocok persis dengan penawaran di Tracker, langsung masuk otomatis
+  const onQuoNoInput = v=>{
+    setQuoInput(v);
+    const k = v.trim().toUpperCase(); if(k.length<8) return;
+    const hit = quoList.find(q=>String(q.docNo).trim().toUpperCase()===k);
+    if(!hit){ return; }
+    const c = ptExtractFromQuotation(hit);
+    if(!c.length){ setMsg({e:true,t:"Penawaran "+hit.docNo+" ketemu, tapi tidak ada part dengan info Indent atau Stock cabang."}); return; }
+    if(importCands({docNo:hit.docNo, customerName:hit.customerName, prNo:hit.prNo}, c)!==null) setQuoInput("");
+  };
+  const onPdfFile = async(file)=>{
+    if(!file || !ready) return;
+    if(!window.pdfjsLib){ setMsg({e:true,t:"Modul pembaca PDF belum siap, coba lagi sebentar."}); return; }
+    setPdfBusy(true);
+    try{
+      const text = await readPdfAsText(file);
+      const r = ptParseQuotationPdfText(text);
+      if(!r.meta.docNo){ setMsg({e:true,t:"PDF terbaca, tapi No. Dokumen penawarannya tidak ditemukan. Pastikan ini PDF penawaran dari Buat Penawaran."}); }
+      else if(!r.cands.length){ setMsg({e:true,t:"PDF penawaran "+r.meta.docNo+" terbaca, tapi tidak ada baris Indent atau Stock cabang. Kalau memang ada, tambahkan manual lewat form di atas."}); }
+      else importCands(r.meta, r.cands);
+    }catch(e){ setMsg({e:true,t:"Gagal membaca PDF. Detail: "+(e&&e.message?e.message:String(e))}); }
+    finally{ setPdfBusy(false); }
   };
   const quickAdvance = it=>{
     const T2 = PART_TYPES[it.type]; const ns = it.stage+1;
@@ -1256,11 +1332,20 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
 
       <Panel id="pt_fromquo" defaultOpen={false} className="no-print" style={{marginBottom:20}} title="Ambil dari Penawaran" hint="(part indent / stock cabang di penawaran, klik untuk buka/tutup)">
         <div className="signer-card" style={{marginTop:8}}>
-          <p className="pt-form-note">Pilih penawaran yang di Buat Penawaran-nya sudah diisi info Indent atau Stock cabang. Partnya langsung masuk ke tracking lengkap dengan No. Penawaran, customer, dan estimasi harinya.</p>
-          {quoCands.length===0 ? <div className="empty" style={{padding:"8px 0"}}>Belum ada penawaran tersimpan yang punya info indent atau stock cabang.</div> : (
+          <p className="pt-form-note">Part yang di penawarannya tertulis Indent atau Stock cabang bisa masuk ke tracking otomatis, lengkap dengan No. Penawaran, customer, dan estimasi harinya. Pilih salah satu cara: ketik No. Penawaran, upload PDF-nya, atau pilih dari daftar.</p>
+          <div className="logform">
+            <div><label>Ketik / tempel No. Penawaran</label>
+              <input type="text" list="ptQuoList2" value={quoInput} onChange={e=>onQuoNoInput(e.target.value)} placeholder="contoh: 2602PQ06728 (langsung masuk kalau cocok)" disabled={!ready} />
+              <datalist id="ptQuoList2">{quoCands.slice(0,80).map((x,i)=><option key={i} value={x.q.docNo}>{x.q.customerName}</option>)}</datalist></div>
+            <div><label>Upload PDF penawaran</label>
+              <input type="file" accept="application/pdf,.pdf" disabled={!ready || pdfBusy} onChange={e=>{ const f=e.target.files && e.target.files[0]; if(f) onPdfFile(f); e.target.value=""; }} />
+              {pdfBusy && <div className="pt-form-note" style={{margin:"6px 0 0"}}>Membaca PDF...</div>}</div>
+          </div>
+          {msg && <div style={{color:msg.e?"var(--red)":"var(--green)",fontFamily:"var(--sans)",fontWeight:600,fontSize:12.5,margin:"4px 0 10px"}}>{msg.t}</div>}
+          {quoCands.length===0 ? <div className="empty" style={{padding:"8px 0"}}>Belum ada penawaran tersimpan di Tracker yang punya info indent atau stock cabang. Upload PDF-nya langsung juga bisa.</div> : (
             <React.Fragment>
               <select value={selQuoId} onChange={e=>setSelQuoId(e.target.value)} style={{marginBottom:10}}>
-                <option value="">Pilih penawaran</option>
+                <option value="">...atau pilih dari daftar penawaran</option>
                 {quoCands.map(x=><option key={x.q.id} value={x.q.id}>{x.q.docNo+" | "+(x.q.customerName||"-")+" | "+ptFmt(x.q.docDate)+" | "+(qmap&&qmap[String(x.q.docNo).trim()]==="deal"?"DEAL":"open")}</option>)}
               </select>
               {selQuo && (
