@@ -1882,6 +1882,7 @@ function MainApp({onDisconnect, binId}){
   const [quoTermsText,setQuoTermsText] = useState("");
   const [quotationsByKey,setQuotationsByKey] = useState({});
   const [quoEditingId,setQuoEditingId] = useState(null);
+  const [quoDetailId,setQuoDetailId] = useState(null); // id penawaran yang detailnya dibuka di kotak Follow Up
   const [quoSearch,setQuoSearch] = useState("");
   const [quoStatusFilter,setQuoStatusFilter] = useState("all"); // all | open | fu | deal | lost | arsip
   const [fuDraftId,setFuDraftId] = useState(null);
@@ -3683,6 +3684,70 @@ function MainApp({onDisconnect, binId}){
         {st==="deal" && btn("Batal Deal", ()=>undoDeal(q))}
         {(st==="lost" || st==="arsip") && btn("Buka lagi", ()=>reopenQuotation(q))}
       </span>
+    );
+  };
+  // Detail penawaran tersimpan (tampilan internal: diskon per part dan lokasi stock tetap terlihat)
+  const renderQuoDetail = (q)=>{
+    const ppnP = q.ppnExclude ? "0" : (q.ppnPct!=null ? q.ppnPct : "11");
+    const isAis = q.format==="ais";
+    const secs = isAis
+      ? [{title:"", calc:calcSection(q.aisRows||[], true, q.discPct, ppnP), discPct:q.discPct}]
+      : [{title:"Spare Parts", calc:calcSection(q.spareParts||[], true, q.manualDiscPct, ppnP), discPct:q.manualDiscPct},
+         {title:"Consumable/Commodity", calc:calcSection(q.consumable||[], false, 0, ppnP)},
+         {title:"Service", calc:calcSection(q.service||[], false, 0, ppnP)}];
+    const fmt = n=>Math.round(n).toLocaleString("id-ID");
+    const th = {padding:"4px 6px",fontSize:11,textAlign:"left",background:"var(--paper-raise)",borderBottom:"1.5px solid var(--ink)"};
+    const td = {padding:"4px 6px",fontSize:12,verticalAlign:"top",borderTop:"1px solid var(--line)"};
+    const num = {...td,textAlign:"right",whiteSpace:"nowrap"};
+    const info = (label, val)=> val ? <div><b>{label}</b> : {val}</div> : null;
+    return (
+      <div className="no-print" style={{background:"#fff",border:"2px solid var(--ink)",padding:"10px 12px",margin:"4px 0 10px",fontFamily:"var(--sans)",fontSize:12.5}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"4px 24px",marginBottom:8}}>
+          {info("No. Dokumen", q.docNo)}
+          {info("Tanggal", q.docDate ? new Date(q.docDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'}) : "")}
+          {info("Customer", UC(q.customerName))}
+          {info("Attn", q.attn)}
+          {info("Alamat", q.address)}
+          {info("Merk / Model / SN", [q.merk,q.model,q.sn].filter(Boolean).join(" / "))}
+          {info("No. PR", q.prNo)}
+          {info("Format", isAis ? "AIS System" : "Manual BMP")}
+        </div>
+        {secs.map((x,si)=>{
+          const rows = x.calc.rows.filter(r=>String(r.desc||"").trim() || r.ext>0);
+          if(!rows.length) return null;
+          const dPctTxt = (!x.calc.rows.some(r=>r.dPct>0) && Number(x.discPct)>0) ? " "+x.discPct+"%" : "";
+          return (
+            <div key={si} style={{marginBottom:8,overflowX:"auto"}}>
+              {x.title && <div style={{fontWeight:800,fontSize:12,margin:"4px 0"}}>{x.title}</div>}
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr><th style={th}>No</th><th style={th}>Part / Deskripsi</th><th style={{...th,textAlign:"right"}}>Qty</th><th style={{...th,textAlign:"right"}}>Harga list</th><th style={{...th,textAlign:"right"}}>Disc</th><th style={{...th,textAlign:"right"}}>Unit Price</th><th style={{...th,textAlign:"right"}}>Ext Price</th></tr></thead>
+                <tbody>
+                  {rows.map((r,i)=>(
+                    <tr key={i}>
+                      <td style={td}>{i+1}</td>
+                      <td style={td}>{r.desc}{r.supersede ? <div className="meta">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="meta" style={{fontWeight:700}}>{stockText(r)}</div> : null}{r.remark ? <div className="meta">{r.remark}</div> : null}</td>
+                      <td style={num}>{r.qtyNum||""}</td>
+                      <td style={num}>{Number(r.unitPrice)? fmt(Number(r.unitPrice)) : ""}</td>
+                      <td style={num}>{r.dPct>0 ? r.dPct+"%" : "-"}</td>
+                      <td style={num}>{r.priceNum ? fmt(r.priceNum) : ""}</td>
+                      <td style={num}>{r.ext ? fmt(r.ext) : ""}</td>
+                    </tr>
+                  ))}
+                  <tr><td colSpan={6} style={{...num,fontWeight:700}}>Total Value</td><td style={{...num,fontWeight:700}}>{fmt(x.calc.totalValue)}</td></tr>
+                  {x.calc.discAmt>0 && <tr><td colSpan={6} style={num}>Disc{dPctTxt}</td><td style={num}>-{fmt(x.calc.discAmt)}</td></tr>}
+                  {q.ppnExclude ? <tr><td colSpan={7} style={{...num,fontStyle:"italic"}}>Exclude PPN</td></tr> : (x.calc.ppn>0 && <tr><td colSpan={6} style={num}>PPN {ppnP}%</td><td style={num}>{fmt(x.calc.ppn)}</td></tr>)}
+                  <tr><td colSpan={6} style={{...num,fontWeight:800}}>Total</td><td style={{...num,fontWeight:800}}>{fmt(x.calc.total)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
+          <span className="icon-btn" style={{fontSize:11.5,padding:"4px 10px",fontWeight:700}} onClick={()=>{ setQuoDetailId(null); loadQuotationForEdit(q); }}>Edit penawaran ini</span>
+          <span className="icon-btn" style={{fontSize:11.5,padding:"4px 10px"}} onClick={()=>setQuoDetailId(null)}>Tutup</span>
+          <span className="meta">Ada yang salah? Klik Edit, form di atas terisi, ubah, lalu Update Penawaran Tersimpan.</span>
+        </div>
+      </div>
     );
   };
   const quotationsThisQ = quotationsByKey[qKey] || [];
@@ -5597,13 +5662,16 @@ function MainApp({onDisconnect, binId}){
               </div>
               {copyFeedback && <div className="extract-note" style={{fontStyle:"normal",fontWeight:700,color:"var(--green)"}}>{copyFeedback}</div>}
               {fuList.map(q=>(
-                <div key={q.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"6px 0",borderTop:"1.5px solid var(--line)",fontSize:12.5}}>
+                <React.Fragment key={q.id}><div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"6px 0",borderTop:"1.5px solid var(--line)",fontSize:12.5}}>
                   <span style={{flex:1,minWidth:200}}>
-                    <b>{q.docNo||"(tanpa No.)"}</b> — {UC(q.customerName)||"-"} — {formatRupiah(q.totalAll)}
+                    <span style={{cursor:"pointer",textDecoration:"underline",textUnderlineOffset:3}} title="Klik untuk lihat detail penawaran" onClick={()=>setQuoDetailId(quoDetailId===q.id ? null : q.id)}><b>{q.docNo||"(tanpa No.)"}</b> — {UC(q.customerName)||"-"} — {formatRupiah(q.totalAll)}</span>
                     <span className="meta" style={{color:"var(--red)",fontWeight:700}}> — {workdaysSince(quoFuBase(q))} hari kerja</span>
                   </span>
+                  <span className="icon-btn" style={{fontSize:11,padding:"3px 8px",fontWeight:700}} onClick={()=>setQuoDetailId(quoDetailId===q.id ? null : q.id)}>{quoDetailId===q.id ? "Tutup" : "Detail"}</span>
                   {renderQuoStatusButtons(q)}
                 </div>
+                {quoDetailId===q.id && renderQuoDetail(q)}
+                </React.Fragment>
               ))}
               <details style={{marginTop:10}}>
                 <summary style={{cursor:"pointer",fontFamily:"var(--sans)",fontWeight:700,fontSize:12}}>Rapikan penawaran lama sekaligus</summary>
