@@ -1042,14 +1042,17 @@ function ptExtractFromQuotation(q){
   });
   return out;
 }
-function ptBuildFu(it, toCustomer){
+function ptBaseNo(n){ return String(n||"").trim().toUpperCase().replace(/\s*REV(ISI)?\s*\d*$/,""); }
+function ptBuildFu(it, toCustomer, more){
   const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
   const part = ((it.partNo||"")+" "+(it.desc||"")).trim() + (it.qty ? " (qty "+it.qty+")" : "");
+  const all = [it].concat(more||[]); const multi = all.length>1;
+  const partTxt = x=>((x.partNo||"")+" "+(x.desc||"")).trim() + (x.qty ? " (qty "+x.qty+")" : "");
   if(toCustomer){
-    return ["Selamat "+sapa+",", "Kami info, part untuk "+it.customer+" sudah tiba di depo Cilegon:", "- "+part, "", "Kira-kira kapan jadwal yang pas untuk pengiriman atau pemasangannya ya? Kami siap sesuaikan dengan jadwal operasional di sana.", "Terimakasih."].join("\n");
+    return ["Selamat "+sapa+",", "Kami info, part untuk "+it.customer+" sudah tiba di depo Cilegon:", ...(multi ? all.map(x=>"- "+partTxt(x)) : ["- "+part]), "", "Kira-kira kapan jadwal yang pas untuk pengiriman atau pemasangannya ya? Kami siap sesuaikan dengan jadwal operasional di sana.", "Terimakasih."].join("\n");
   }
   const what = it.type==="bo" ? ("BO emergency"+(it.isNo ? " "+it.isNo : "")) : (it.isNo ? "pengiriman "+it.isNo : ( (it.type==="indent" ? "order indent" : "request part ke cabang")));
-  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", "- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : []), "- Customer: "+it.customer];
+  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", ...(multi ? ["- Part:"].concat(all.map((x,i)=>"  "+(i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : ""))) : ["- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : [])]), "- Customer: "+it.customer];
   if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
   if(it.ref) lines.push("- Ref: "+it.ref);
   if(it.type==="cabang" && it.branch) lines.push("- Asal: "+it.branch);
@@ -1102,18 +1105,25 @@ function ptParseQuotationPdfText(text){
 }
 
 // Pesan untuk memulai proses: indent (setelah deal) atau minta stock cabang dikirim ke Cilegon (boleh sebelum PO)
-function ptBuildOrderMsg(it){
+function ptBuildOrderMsg(it, more){
   const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
   const part = ((it.partNo||"")+" "+(it.desc||"")).trim() + (it.qty ? " (qty "+it.qty+")" : "");
+  const all = [it].concat(more||[]); const multi = all.length>1;
+  const partTxt = x=>((x.partNo||"")+" "+(x.desc||"")).trim() + (x.qty ? " (qty "+x.qty+")" : "");
   if(it.type==="cabang"){
-    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", "- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : []), "- Customer: "+it.customer];
+    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", ...(multi ? ["- Part:"].concat(all.map((x,i)=>"  "+(i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : ""))) : ["- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : [])]), "- Customer: "+it.customer];
     if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
     lines.push("", "Mohon info No. IS-nya kalau sudah terbit ya.", "Terimakasih.");
     return lines.join("\n");
   }
-  const lines = ["Selamat "+sapa+",", "Penawaran "+(it.quoNo||"")+" untuk "+it.customer+" sudah deal. Mohon dibantu proses indent:", "- Part: "+part];
-  if(it.origin) lines.push("- Asal indent: "+it.origin);
-  if(it.leadDays) lines.push("- Estimasi di penawaran: "+it.leadDays+" hari");
+  const lines = ["Selamat "+sapa+",", "Penawaran "+(it.quoNo||"")+" untuk "+it.customer+" sudah deal. Mohon dibantu proses indent:"];
+  if(multi){ all.forEach((x,i)=>lines.push((i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : "")+(x.origin ? " | asal "+x.origin : "")+(x.leadDays ? " | est. "+x.leadDays+" hari" : ""))); }
+  else {
+    lines.push("- Part: "+part);
+    if(it.agc) lines.push("- AGC: "+it.agc);
+    if(it.origin) lines.push("- Asal indent: "+it.origin);
+    if(it.leadDays) lines.push("- Estimasi di penawaran: "+it.leadDays+" hari");
+  }
   lines.push("", "Mohon info No. IS dan estimasi tibanya di Cilegon setelah diproses ya.", "Terimakasih.");
   return lines.join("\n");
 }
@@ -1192,10 +1202,40 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     }
     return b;
   };
+  // Satu penawaran = satu kartu: part dengan jenis, customer, nomor penawaran (REV dianggap sama), tahap, dan status yang sama dikelompokkan
+  const ckey = it => it.quoNo
+    ? ["q", it.type, String(it.customer||"").trim().toUpperCase(), ptBaseNo(it.quoNo), (it.type==="cabang" ? (it.branch||"") : ""), it.stage, it.isNo||"", it.dealStatus||""].join("|")
+    : (it.isNo ? ["i", it.type, String(it.customer||"").trim().toUpperCase(), it.isNo, it.stage].join("|") : "id|"+it.id);
+  const clusterOf = it => items.filter(x=>x.id!==it.id && PART_TYPES[x.type] && !ptIsDone(x) && ckey(x)===ckey(it));
   const markDeal = it=>{
-    onChange(items.map(x=> x.id===it.id ? {...x, dealStatus:"deal", dealDate:today, history:[...(x.history||[]), {date:today, stage:x.stage, note:"PO / deal masuk"}]} : x));
+    const ids = [it.id].concat(clusterOf(it).map(x=>x.id));
+    onChange(items.map(x=> ids.indexOf(x.id)>=0 ? {...x, dealStatus:"deal", dealDate:today, history:[...(x.history||[]), {date:today, stage:x.stage, note:"PO / deal masuk"}]} : x));
   };
-  const groupOf = it => (it.isNo && !ptIsDone(it)) ? items.filter(x=>x.id!==it.id && x.isNo===it.isNo && x.type===it.type && x.stage===it.stage) : [];
+  const removeMany = list=>{
+    if(!window.confirm("Hapus "+list.length+" part dari penawaran "+(list[0].quoNo||list[0].isNo||"ini")+" untuk "+list[0].customer+"? Tindakan ini tidak bisa dibatalkan.")) return;
+    const ids = list.map(x=>x.id);
+    onChange(items.filter(x=>ids.indexOf(x.id)<0));
+  };
+  const dupGroups = ms=>{ const m={}; ms.forEach(x=>{ const k=[x.type, String(x.partNo||x.desc||"").toUpperCase(), x.branch||""].join("|"); (m[k]=m[k]||[]).push(x); }); return Object.keys(m).map(k=>m[k]).filter(g=>g.length>1); };
+  const mergeDup = ms=>{
+    const groups = dupGroups(ms); if(!groups.length) return;
+    if(!window.confirm("Ada "+groups.length+" part dobel (biasanya dari penawaran asli dan REV-nya). Yang terlama dihapus, yang terbaru dipertahankan. Lanjut?")) return;
+    const drop = {}; const upd = {};
+    groups.forEach(g=>{
+      const byNew = g.slice().sort((a,b)=> (String(b.quoNo||"").length-String(a.quoNo||"").length) || String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+      const latest = byNew[0];
+      const keep = g.slice().sort((a,b)=> (b.stage-a.stage) || (String(b.quoNo||"").length-String(a.quoNo||"").length) || String(b.createdAt||"").localeCompare(String(a.createdAt||"")))[0];
+      g.forEach(x=>{ if(x.id!==keep.id) drop[x.id]=1; });
+      upd[keep.id] = {quoNo:latest.quoNo, qty:latest.qty};
+    });
+    onChange(items.filter(x=>!drop[x.id]).map(x=> upd[x.id] ? {...x, quoNo:upd[x.id].quoNo, qty:upd[x.id].qty, history:[...(x.history||[]), {date:today, stage:x.stage, note:"Digabung dari part dobel revisi penawaran"}]} : x));
+  };
+  const groupOf = it => {
+    if(ptIsDone(it)) return [];
+    const old = it.isNo ? items.filter(x=>x.id!==it.id && x.isNo===it.isNo && x.type===it.type && x.stage===it.stage) : [];
+    const seen = {};
+    return old.concat(clusterOf(it)).filter(x=> seen[x.id] ? false : (seen[x.id]=true));
+  };
   const applyStage = (ids, stage, note, date, extraFn)=>{
     const next = items.map(x=>{
       if(ids.indexOf(x.id)<0) return x;
@@ -1216,7 +1256,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     const docNo = String(meta.docNo||"").trim();
     const st = qmap ? qmap[docNo] : "";
     const isDeal = st==="deal";
-    const exists = x => items.some(y=>y.quoNo===docNo && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
+    const exists = x => items.some(y=>ptBaseNo(y.quoNo)===ptBaseNo(docNo) && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
     const fresh = cands.filter(x=>!exists(x));
     if(!fresh.length){ setMsg({e:true,t:"Semua part indent / stock cabang dari penawaran "+docNo+" sudah ada di Tracking Part."}); return 0; }
     const made = fresh.map((x,i)=>({
@@ -1307,6 +1347,8 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     if(sa!==sb) return sb-sa;
     return (a.it.eta||"9999").localeCompare(b.it.eta||"9999");
   });
+
+  const buildClusters = grs=>{ const cl=[]; const idx={}; grs.forEach(r=>{ const k=ckey(r.it); if(idx[k]==null){ idx[k]=cl.length; cl.push({rows:[]}); } cl[idx[k]].rows.push(r); }); return cl; };
 
   return (
     <React.Fragment>
@@ -1401,8 +1443,11 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
         const grows = rows.filter(r=>r.it.type===tk);
         if(!grows.length) return null;
         return (
-        <Panel key={tk} id={"pt_grp_"+tk} defaultOpen={true} style={{marginBottom:14}} title={PART_TYPES[tk].label+" ("+grows.length+")"} hint="(klik untuk buka/tutup)">
-        {grows.map(({it,al})=>{
+        <Panel key={tk} id={"pt_grp_"+tk} defaultOpen={true} style={{marginBottom:14}} title={PART_TYPES[tk].label+" ("+grows.length+" part"+(buildClusters(grows).length<grows.length ? " dalam "+buildClusters(grows).length+" kartu" : "")+")"} hint="(klik untuk buka/tutup)">
+        {buildClusters(grows).map(c=>{
+        const it = c.rows[0].it; const members = c.rows.map(r=>r.it); const rest = members.slice(1);
+        const al = []; c.rows.forEach(r=>r.al.forEach(a=>{ if(!al.some(z=>z.text===a.text)) al.push(a); }));
+        const upIt = members.find(m=>m.id===upId);
         const T2 = PART_TYPES[it.type]; const done = ptIsDone(it);
         const sev = al.reduce((m,x)=>Math.max(m,x.sev),0);
         const arrived = !done && it.stage===T2.stages.length-2;
@@ -1414,26 +1459,41 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
             <div className="pt-head">
               <span className={"pt-tag "+it.type}>{T2.short}</span>
               {it.isNo ? <span className="pt-is">{it.isNo}</span> : (it.type==="bo" ? <span className="pt-noIS">No. BO belum diisi, FU manual</span> : <span className="pt-noIS">IS belum ada</span>)}
-              {grp.length>0 && <span className="meta" style={{fontSize:11,color:"var(--muted)"}}>+{grp.length} part lain di nomor ini</span>}
+              {members.length>1 && <span className="meta" style={{fontSize:11,fontWeight:700}}>{members.length} part dalam satu penawaran</span>}
+              {(()=>{ const extra = grp.filter(x=>!members.some(m=>m.id===x.id)).length; return extra>0 ? <span className="meta" style={{fontSize:11,color:"var(--muted)"}}>+{extra} part lain di nomor ini</span> : null; })()}
             </div>
             <div className="pt-cust">{it.customer}</div>
-            <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
+            {members.length>1 ? (
+              <div className="pt-part">
+              {members.map((m,i)=>(
+                <div key={m.id} style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
+                  <span>{(i+1)+". "+(m.partNo?m.partNo+" ":"")+(m.desc||"")}{m.qty?" | qty "+m.qty:""}{m.agc?" | AGC "+m.agc:""}{m.type==="indent"&&m.origin?" ("+m.origin+")":""}{m.type==="indent"&&m.leadDays?" | est. "+m.leadDays+" hari":""}</span>
+                  {!done && <span className="no-print" style={{cursor:"pointer",textDecoration:"underline",fontSize:11}} onClick={()=>upId===m.id?setUpId(null):openUpdate(m)}>edit</span>}
+                  <span className="no-print" style={{cursor:"pointer",color:"var(--red)",fontSize:11}} onClick={()=>remove(m)}>hapus</span>
+                </div>
+              ))}
+              <div style={{marginTop:2}}>{it.quoNo?"penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}</div>
+            </div>
+            ) : (
+              <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
+            )}
             <div className="pt-steps">{T2.stages.map((s,i)=><div key={i} title={s} className={"pt-step"+(i<it.stage?" past":"")+(i===it.stage?" now":"")} />)}</div>
             <div className="pt-stage">{T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
             {(al.length>0 || (ptPreDeal(it) && !done)) && <div className="pt-chips">{ptPreDeal(it) && !done && <span className="pt-chip">Menunggu PO</span>}{al.map((a,i)=><span key={i} className={"pt-chip"+((a.k==="tiba"||a.k==="deal")?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
 
             <div className="pt-actions no-print">
               {!done && ptPreDeal(it) && <button type="button" className="icon-btn" onClick={()=>markDeal(it)}>Sudah deal / PO masuk</button>}
-              {!done && it.stage===0 && (it.type==="cabang" || it.type==="indent") && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildOrderMsg(it), it.id+"o")}>{copiedId===it.id+"o" ? "Tersalin" : (it.type==="cabang" ? "Salin pesan minta kirim stock" : "Salin pesan proses indent")}</button>}
+              {!done && it.stage===0 && (it.type==="cabang" || it.type==="indent") && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildOrderMsg(it, rest), it.id+"o")}>{copiedId===it.id+"o" ? "Tersalin" : (it.type==="cabang" ? "Salin pesan minta kirim stock" : "Salin pesan proses indent")}</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>quickAdvance(it)}>{it.stage+1===T2.stages.length-1 ? "Sudah diserahkan" : "Maju: "+nextLabel}{grp.length>0?" ("+(grp.length+1)+" part)":""}</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>upId===it.id?setUpId(null):openUpdate(it)}>Update / Catat FU</button>}
-              {!done && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,false), it.id)}>{copiedId===it.id?"Tersalin":"Salin pesan FU"}</button>}
-              {arrived && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,true), it.id+"c")}>{copiedId===it.id+"c"?"Tersalin":"Salin info ke customer"}</button>}
+              {!done && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,false,rest), it.id)}>{copiedId===it.id?"Tersalin":"Salin pesan FU"}</button>}
+              {arrived && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,true,rest), it.id+"c")}>{copiedId===it.id+"c"?"Tersalin":"Salin info ke customer"}</button>}
               <button type="button" className="icon-btn" onClick={()=>setHistId(histId===it.id?null:it.id)}>Riwayat ({hist.length})</button>
-              <button type="button" className="icon-btn danger" onClick={()=>remove(it)}>Hapus</button>
+              {!done && dupGroups(members).length>0 && <button type="button" className="icon-btn" onClick={()=>mergeDup(members)}>Rapikan part dobel</button>}
+              <button type="button" className="icon-btn danger" onClick={()=>members.length>1 ? removeMany(members) : remove(it)}>{members.length>1 ? "Hapus semua ("+members.length+")" : "Hapus"}</button>
             </div>
 
-            {upId===it.id && !done && (
+            {upIt && !done && (()=>{ const it = upIt; const grp = groupOf(it); return (
               <div className="pt-panel">
                 <div className="logform">
                   <div><label>Status</label><select value={uStage} onChange={e=>setUStage(Number(e.target.value))}>{T2.stages.map((s,i)=><option key={i} value={i}>{s}</option>)}</select></div>
@@ -1459,7 +1519,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
                   <button type="button" className="icon-btn" onClick={()=>setUpId(null)}>Batal</button>
                 </div>
               </div>
-            )}
+            ); })()}
 
             {histId===it.id && (
               <div className="pt-hist">
@@ -3409,19 +3469,25 @@ function MainApp({onDisconnect, binId}){
       if(cands.length){
         if(!partReady){ trackNote = " Tracking Part belum selesai dimuat, jadi part indent / stock cabang belum otomatis masuk. Simpan ulang sebentar lagi."; }
         else {
-          const exists = x => partItems.some(y=>y.quoNo===obj.docNo && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
+          const bn = ptBaseNo(obj.docNo);
+          const sameQ = y => ptBaseNo(y.quoNo)===bn;
+          const exists = x => partItems.some(y=>sameQ(y) && y.type===x.type && y.partNo===x.partNo && y.branch===x.branch);
           const fresh = cands.filter(x=>!exists(x));
-          if(fresh.length){
-            const todayISO = localISO();
+          const todayISO = localISO();
+          const renum = {};
+          partItems.forEach(y=>{ if(sameQ(y) && !ptIsDone(y) && String(y.quoNo||"").trim()!==String(obj.docNo).trim()) renum[y.id]=1; });
+          const nRenum = Object.keys(renum).length;
+          if(fresh.length || nRenum){
             const made = fresh.map((x,i)=>({
-              id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, isNo:"", customer:obj.customerName||"",
+              id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, agc:x.agc||"", isNo:"", customer:obj.customerName||"",
               partNo:x.partNo, desc:x.desc, qty:x.qty, branch:x.branch, origin:x.origin, ref:obj.prNo||"", quoNo:obj.docNo,
-              dealStatus: obj.status==="deal" ? "deal" : "quo", agc:x.agc||"", leadDays:x.leadDays, orderDate:todayISO, eta:"", stage:0,
+              dealStatus: obj.status==="deal" ? "deal" : "quo", leadDays:x.leadDays, orderDate:todayISO, eta:"", stage:0,
               history:[{date:todayISO, stage:0, note:"Otomatis dari penawaran "+obj.docNo}], createdAt:new Date().toISOString()
             }));
-            persistParts([...made, ...partItems]);
+            const kept = partItems.map(y=> renum[y.id] ? {...y, quoNo:obj.docNo, history:[...(y.history||[]), {date:todayISO, stage:y.stage, note:"Penawaran direvisi menjadi "+obj.docNo}]} : y);
+            persistParts([...made, ...kept]);
             const ind = made.filter(x=>x.type==="indent").length;
-            trackNote = " "+made.length+" part ("+ind+" indent, "+(made.length-ind)+" stock cabang) otomatis masuk Tracking Part.";
+            trackNote = (made.length ? " "+made.length+" part ("+ind+" indent, "+(made.length-ind)+" stock cabang) otomatis masuk Tracking Part." : "") + (nRenum ? " "+nRenum+" part yang sudah ada diperbarui ke nomor "+obj.docNo+"." : "");
           }
         }
       }
