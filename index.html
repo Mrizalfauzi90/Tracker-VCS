@@ -1031,12 +1031,13 @@ function ptExtractFromQuotation(q){
     const parts = String(r.desc).split(",");
     const partNo = (parts[0]||"").trim().toUpperCase();
     const desc = parts.slice(1).join(",").trim();
+    const agc = String(r.agc!=null ? r.agc : (q.format==="ais" ? "" : "24")).replace(/\D/g,"");
     getStocks(r).forEach(e=>{
       if(!e || !e.loc || e.loc==="LAIN" || /cilegon/i.test(e.loc)) return;
       const qty = String(e.qty||"").replace(/\D/g,"") || String(r.qty||"").replace(/\D/g,"");
       const days = String(e.days||"").replace(/\D/g,"");
-      if(e.loc==="INDENT") out.push({type:"indent", partNo, desc, qty, leadDays:days, origin:String(e.detail||"").trim(), branch:"Jakarta"});
-      else out.push({type:"cabang", partNo, desc, qty, leadDays:days, origin:"", branch:e.loc});
+      if(e.loc==="INDENT") out.push({type:"indent", agc, partNo, desc, qty, leadDays:days, origin:String(e.detail||"").trim(), branch:"Jakarta"});
+      else out.push({type:"cabang", agc, partNo, desc, qty, leadDays:days, origin:"", branch:e.loc});
     });
   });
   return out;
@@ -1048,7 +1049,7 @@ function ptBuildFu(it, toCustomer){
     return ["Selamat "+sapa+",", "Kami info, part untuk "+it.customer+" sudah tiba di depo Cilegon:", "- "+part, "", "Kira-kira kapan jadwal yang pas untuk pengiriman atau pemasangannya ya? Kami siap sesuaikan dengan jadwal operasional di sana.", "Terimakasih."].join("\n");
   }
   const what = it.type==="bo" ? ("BO emergency"+(it.isNo ? " "+it.isNo : "")) : (it.isNo ? "pengiriman "+it.isNo : ( (it.type==="indent" ? "order indent" : "request part ke cabang")));
-  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", "- Part: "+part, "- Customer: "+it.customer];
+  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", "- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : []), "- Customer: "+it.customer];
   if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
   if(it.ref) lines.push("- Ref: "+it.ref);
   if(it.type==="cabang" && it.branch) lines.push("- Asal: "+it.branch);
@@ -1105,7 +1106,7 @@ function ptBuildOrderMsg(it){
   const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
   const part = ((it.partNo||"")+" "+(it.desc||"")).trim() + (it.qty ? " (qty "+it.qty+")" : "");
   if(it.type==="cabang"){
-    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", "- Part: "+part, "- Customer: "+it.customer];
+    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", "- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : []), "- Customer: "+it.customer];
     if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
     lines.push("", "Mohon info No. IS-nya kalau sudah terbit ya.", "Terimakasih.");
     return lines.join("\n");
@@ -1221,7 +1222,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     const made = fresh.map((x,i)=>({
       id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, isNo:"", customer:meta.customerName||"",
       partNo:x.partNo, desc:x.desc, qty:x.qty, branch:x.branch, origin:x.origin, ref:meta.prNo||"", quoNo:docNo,
-      dealStatus: isDeal ? "deal" : "quo", leadDays:x.leadDays, orderDate:today, eta:"", stage:0,
+      dealStatus: isDeal ? "deal" : "quo", agc:x.agc||"", leadDays:x.leadDays, orderDate:today, eta:"", stage:0,
       history:[{date:today, stage:0, note:"Diambil dari penawaran "+docNo}], createdAt:new Date().toISOString()
     }));
     onChange([...made, ...items]);
@@ -1416,7 +1417,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
               {grp.length>0 && <span className="meta" style={{fontSize:11,color:"var(--muted)"}}>+{grp.length} part lain di nomor ini</span>}
             </div>
             <div className="pt-cust">{it.customer}</div>
-            <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
+            <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
             <div className="pt-steps">{T2.stages.map((s,i)=><div key={i} title={s} className={"pt-step"+(i<it.stage?" past":"")+(i===it.stage?" now":"")} />)}</div>
             <div className="pt-stage">{T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
             {(al.length>0 || (ptPreDeal(it) && !done)) && <div className="pt-chips">{ptPreDeal(it) && !done && <span className="pt-chip">Menunggu PO</span>}{al.map((a,i)=><span key={i} className={"pt-chip"+((a.k==="tiba"||a.k==="deal")?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
@@ -2917,13 +2918,13 @@ function MainApp({onDisconnect, binId}){
     if(newFormat===quoFormat) return;
     if(newFormat==="manual" && quoFormat==="ais"){
       // Format AIS -> Manual: pindahkan isi Rincian Part AIS ke section SPARE PARTS
-      const converted = quoAisRows.filter(r=>r.desc && r.desc.trim()).map(r=>({desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, remark:"", supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
+      const converted = quoAisRows.filter(r=>r.desc && r.desc.trim()).map(r=>({agc:r.agc||"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, remark:"", supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
       if(converted.length) setQuoSpareParts(converted);
     } else if(newFormat==="ais" && quoFormat==="manual"){
       // Format Manual -> AIS: gabungkan Spare Parts + Consumable + Service jadi satu tabel AIS
       const allRows = [...quoSpareParts, ...quoConsumable, ...quoService]
         .filter(r=>r.desc && r.desc.trim())
-        .map(r=>({agc:"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
+        .map(r=>({agc:r.agc||"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
       if(allRows.length) setQuoAisRows(allRows);
     }
     setQuoFormat(newFormat);
@@ -2967,7 +2968,7 @@ function MainApp({onDisconnect, binId}){
       return updated;
     }))
   });
-  const quoSparePartsH = makeSectionRowHelpers(setQuoSpareParts, {desc:"", qty:"", unitPrice:"", remark:""});
+  const quoSparePartsH = makeSectionRowHelpers(setQuoSpareParts, {agc:"24", desc:"", qty:"", unitPrice:"", remark:""});
   const quoConsumableH = makeSectionRowHelpers(setQuoConsumable, {desc:"", qty:"", unitPrice:"", remark:""});
   const quoServiceH = makeSectionRowHelpers(setQuoService, {desc:"", qty:"", unitPrice:"", remark:""});
 
@@ -3415,7 +3416,7 @@ function MainApp({onDisconnect, binId}){
             const made = fresh.map((x,i)=>({
               id:"pt"+Date.now()+i+Math.floor(Math.random()*1000), type:x.type, isNo:"", customer:obj.customerName||"",
               partNo:x.partNo, desc:x.desc, qty:x.qty, branch:x.branch, origin:x.origin, ref:obj.prNo||"", quoNo:obj.docNo,
-              dealStatus: obj.status==="deal" ? "deal" : "quo", leadDays:x.leadDays, orderDate:todayISO, eta:"", stage:0,
+              dealStatus: obj.status==="deal" ? "deal" : "quo", agc:x.agc||"", leadDays:x.leadDays, orderDate:todayISO, eta:"", stage:0,
               history:[{date:todayISO, stage:0, note:"Otomatis dari penawaran "+obj.docNo}], createdAt:new Date().toISOString()
             }));
             persistParts([...made, ...partItems]);
@@ -3725,7 +3726,7 @@ function MainApp({onDisconnect, binId}){
                   {rows.map((r,i)=>(
                     <tr key={i}>
                       <td style={td}>{i+1}</td>
-                      <td style={td}>{r.desc}{r.supersede ? <div className="meta">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="meta" style={{fontWeight:700}}>{stockText(r)}</div> : null}{r.remark ? <div className="meta">{r.remark}</div> : null}</td>
+                      <td style={td}>{(r.agc || (!isAis && x.title==="Spare Parts")) ? <span className="meta" style={{fontWeight:700}}>AGC {r.agc||"24"} </span> : null}{r.desc}{r.supersede ? <div className="meta">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="meta" style={{fontWeight:700}}>{stockText(r)}</div> : null}{r.remark ? <div className="meta">{r.remark}</div> : null}</td>
                       <td style={num}>{r.qtyNum||""}</td>
                       <td style={num}>{Number(r.unitPrice)? fmt(Number(r.unitPrice)) : ""}</td>
                       <td style={num}>{r.dPct>0 ? r.dPct+"%" : "-"}</td>
@@ -3966,7 +3967,7 @@ function MainApp({onDisconnect, binId}){
     const rows = calcRows.filter(r=>String(r.desc||"").trim() && (Number(r.unitPrice)||0)>0).map(r=>{
       const pn = String(r.desc).split(",")[0].trim();
       const key = pn.toUpperCase();
-      const defElig = isAis ? String(r.agc||"24")==="24" : true;
+      const defElig = String(r.agc||"24")==="24";
       const elig = (key in alifEligOv) ? alifEligOv[key] : defElig;
       const list = Number(r.unitPrice)||0;
       const effPct = !elig ? 0 : (ov!=null ? ov : (anyRowDisc ? r.dPct : globalDisc));
@@ -5394,7 +5395,8 @@ function MainApp({onDisconnect, binId}){
                     const onEnter = e=>{ if(e.key==="Enter"){ e.preventDefault(); focusNextInPartRow(e); } };
                     return (
                     <div key={idx}>
-                      <div className="part-row" style={{gridTemplateColumns:"1.6fr 55px 110px 1fr auto"}}>
+                      <div className="part-row" style={{gridTemplateColumns: sec.useDatalist ? "55px 1.6fr 55px 110px 1fr auto" : "1.6fr 55px 110px 1fr auto"}}>
+                        {sec.useDatalist && <input type="text" inputMode="numeric" placeholder="AGC" title="Nomor Agency (24 = genuine MIT/Nichiyu, 28, 87/88 = consumable/non-genuine, dst)" value={r.agc!=null ? r.agc : "24"} onChange={e=>sec.h.update(idx,"agc",e.target.value.replace(/\D/g,""))} onKeyDown={onEnter} />}
                         <input type="text" list={sec.useDatalist?"knownPartsCombinedDatalist":undefined} placeholder={sec.useDatalist?"No. Part, Nama Part":"Deskripsi"} value={r.desc} onChange={e=>sec.h.update(idx,"desc",e.target.value)} onKeyDown={onEnter} />
                         <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>sec.h.update(idx,"qty",e.target.value)} onKeyDown={onEnter} />
                         <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>sec.h.update(idx,"unitPrice",e.target.value.replace(/\D/g,""))} onKeyDown={onEnter} />
