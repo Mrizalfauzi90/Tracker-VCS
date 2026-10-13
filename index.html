@@ -969,7 +969,7 @@ const PART_TYPES = {
     stages:["BO dipesan","ETA terkonfirmasi","Tiba di Cilegon","Sudah ke customer"],
     hint:"BO / emergency punya nomor sendiri (bukan No. IS). Isi nomornya kalau sudah ada. Karena tidak ada No. IS yang bisa dilacak, harus di-FU langsung; pengingat FU muncul tiap 2 hari kerja tanpa update."}
 };
-const ptNormIS = s => String(s||"").toUpperCase().replace(/\s+/g,"");
+const ptNormIS = s => { const v = String(s||"").toUpperCase().replace(/\s+/g,""); const m = v.match(/^(?:IS)?[-_]?(\d{1,6})$/); return m ? "IS"+m[1].padStart(5,"0") : v; };
 const ptNormNo = (type,s) => type==="bo" ? String(s||"").trim().toUpperCase() : ptNormIS(s);
 const ptFmt = d => d ? (d.slice(8,10)+"/"+d.slice(5,7)+"/"+d.slice(2,4)) : "-";
 const ptLastStage = it => (PART_TYPES[it.type]||PART_TYPES.bo).stages.length-1;
@@ -1045,7 +1045,10 @@ function ptExtractFromQuotation(q){
 function ptBaseNo(n){ return String(n||"").trim().toUpperCase().replace(/\s*REV(ISI)?\s*\d*$/,""); }
 
 // ===== Draft Exco: susun kegiatan hari ini dari penawaran dan Tracking Part =====
+function excoStripCode(n){ return String(n||"").trim().replace(/^[A-Za-z]{1,3}\d{3,}\s*[-_:.]\s*/,""); }
+function excoKey(n){ return excoStripCode(n).trim().toUpperCase(); }
 function excoTitle(name){
+  name = excoStripCode(name);
   const KEEP = {"PT":1,"CV":1,"UD":1,"NSI":1,"BMP":1,"BICC":1,"JM":1};
   return String(name||"").trim().split(/\s+/).map(w=>{
     const core = w.replace(/[.,]+$/,"");
@@ -1102,7 +1105,7 @@ function excoNew(cust, text, basis, checked, saved){
 }
 const EXCO_GENERIC = ["Gali kebutuhan part dan service periodik unit.","Diskusi kebutuhan part dan jadwal service unit.","Menggali kembali kebutuhan part dan service unit.","Follow up kebutuhan part repeat order dan jadwal service."];
 function excoSuggest(o, have, need){
-  const K = n=>String(n||"").trim().toUpperCase();
+  const K = excoKey;
   const out = []; const h = Object.assign({}, have);
   const push = (cust, text)=>{ if(out.length>=need) return; const k = K(cust); if(!k || h[k]) return; h[k]=1; out.push(excoNew(cust, text, "saran", false, false)); };
   (o.fuQuotes||[]).forEach(q=>push(q.customerName, excoQuoText(q,"fu")));
@@ -1116,7 +1119,7 @@ function excoSuggest(o, have, need){
   return out;
 }
 function excoBuild(o){
-  const K = n=>String(n||"").trim().toUpperCase();
+  const K = excoKey;
   const dOf = iso=>{ try{ const d = new Date(iso); return isNaN(d) ? "" : localISO(d); }catch(e){ return ""; } };
   const order = []; const qByC = {}; const pByC = {}; const eByC = {};
   (o.quotes||[]).slice().sort((a,b)=>String(b.savedAt||"").localeCompare(String(a.savedAt||""))).forEach(q=>{
@@ -1270,6 +1273,8 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
   const [uQty,setUQty] = useState("");
   const [uAll,setUAll] = useState(true);
   const [uSel,setUSel] = useState({});
+  const [qSel,setQSel] = useState({});
+  const [qIS,setQIS] = useState({});
   const [copiedId,setCopiedId] = useState(null);
   const [fQuo,setFQuo] = useState("");
   const [fDeal,setFDeal] = useState("deal");
@@ -1443,6 +1448,46 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     if(!window.confirm("Hapus catatan part "+(it.isNo?it.isNo+" - ":"")+(it.partNo||it.desc)+" untuk "+it.customer+"? Tindakan ini tidak bisa dibatalkan.")) return;
     onChange(items.filter(x=>x.id!==it.id));
   };
+  // Isi No. IS cepat untuk part yang dicentang; part yang belum sampai tahap "dikirim" ikut dipindah ke tahap itu
+  const applyQuickIS = (it, ids)=>{
+    const T2 = PART_TYPES[it.type];
+    const is = ptNormNo(it.type, qIS[it.id]||"");
+    const tgt = ids.filter(id=>{ const x = items.find(y=>y.id===id); return x && !ptIsDone(x); });
+    if(!tgt.length){ setMsg({e:true,t:"Centang dulu part yang masuk "+T2.numLabel+" ini."}); return; }
+    if(!is){ setMsg({e:true,t:"Isi "+T2.numLabel+" dulu."}); return; }
+    const next = items.map(x=>{
+      if(tgt.indexOf(x.id)<0) return x;
+      let b = {...x, isNo:is};
+      if(T2.isFrom!=null && x.stage<T2.isFrom){ b.stage = T2.isFrom; b.history = [...(x.history||[]), {date:today, stage:T2.isFrom, note:T2.numLabel+" "+is}]; b = ptStartProcess(x, b, today); }
+      else b.history = [...(x.history||[]), {date:today, stage:x.stage, note:T2.numLabel+" "+is}];
+      return b;
+    });
+    onChange(next);
+    setQSel(sv=>{ const n = {...sv}; tgt.forEach(id=>{ delete n[id]; }); return n; });
+    setQIS(v=>({...v,[it.id]:""}));
+    if(it.type!=="bo" && !/^IS\d{4,}$/.test(is)) setMsg({e:true,t:"Tersimpan, tapi format No. IS tidak seperti biasanya (contoh IS00841). Mohon dicek lagi."});
+    else setMsg({e:false,t:tgt.length+" part diisi "+is+(T2.isFrom!=null ? " dan dipindah ke tahap "+T2.stages[T2.isFrom]+" kalau belum" : "")+"."});
+  };
+  // Majukan part yang dicentang ke tahap berikutnya masing-masing
+  const advanceSelected = (it, ids)=>{
+    const T2 = PART_TYPES[it.type];
+    const tgt = ids.map(id=>items.find(y=>y.id===id)).filter(x=>x && !ptIsDone(x));
+    if(!tgt.length){ setMsg({e:true,t:"Centang dulu part yang mau dimajukan."}); return; }
+    const is = ptNormNo(it.type, qIS[it.id]||"");
+    const needIs = tgt.filter(x=>{ const ns = x.stage+1; return T2.isFrom!=null && ns>=T2.isFrom && ns<T2.stages.length-1 && !x.isNo && !is; });
+    if(needIs.length){ setMsg({e:true,t:needIs.length+" part belum punya "+T2.numLabel+". Isi dulu di kolom di sebelah tombol ini."}); return; }
+    const next = items.map(x=>{
+      if(!tgt.some(y=>y.id===x.id)) return x;
+      const ns = x.stage+1;
+      let b = {...x, stage:ns, history:[...(x.history||[]), {date:today, stage:ns, note:""}]};
+      if(!b.isNo && is && T2.isFrom!=null && ns>=T2.isFrom) b.isNo = is;
+      b = ptStartProcess(x, b, today);
+      return b;
+    });
+    onChange(next);
+    setQSel({});
+    setMsg({e:false,t:tgt.length+" part dimajukan ke tahap berikutnya."});
+  };
   const copyText = (text, id)=>{
     const done = ()=>{ setCopiedId(id); setTimeout(()=>setCopiedId(c=>c===id?null:c), 2000); };
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done).catch(()=>window.prompt("Salin pesan ini:", text)); }
@@ -1594,7 +1639,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
               <div className="pt-part">
               {members.map((m,i)=>(
                 <div key={m.id} style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
-                  <span>{(i+1)+". "+(m.partNo?m.partNo+" ":"")+(m.desc||"")}{m.qty?" | qty "+m.qty:""}{m.agc?" | AGC "+m.agc:""}{m.type==="indent"&&m.origin?" ("+m.origin+")":""}{m.type==="indent"&&m.leadDays?" | est. "+m.leadDays+" hari":""}{brSet.length>1&&m.branch?" | dari "+m.branch:""}{mixedIS?" | "+(m.isNo||"belum ada IS"):""}{mixedStage?" | "+T2.stages[m.stage]:""}</span>
+                  {!ptIsDone(m) && <input type="checkbox" className="no-print" checked={!!qSel[m.id]} onChange={e=>setQSel(sv=>({...sv,[m.id]:e.target.checked}))} style={{width:"auto"}} />}<span>{(i+1)+". "+(m.partNo?m.partNo+" ":"")+(m.desc||"")}{m.qty?" | qty "+m.qty:""}{m.agc?" | AGC "+m.agc:""}{m.type==="indent"&&m.origin?" ("+m.origin+")":""}{m.type==="indent"&&m.leadDays?" | est. "+m.leadDays+" hari":""}{brSet.length>1&&m.branch?" | dari "+m.branch:""}{mixedIS?" | "+(m.isNo||"belum ada IS"):""}{mixedStage?" | "+T2.stages[m.stage]:""}</span>
                   {!done && <span className="no-print" style={{cursor:"pointer",textDecoration:"underline",fontSize:11}} onClick={()=>upId===m.id?setUpId(null):openUpdate(m,undefined,true)}>edit</span>}
                   <span className="no-print" style={{cursor:"pointer",color:"var(--red)",fontSize:11}} onClick={()=>remove(m)}>hapus</span>
                 </div>
@@ -1604,6 +1649,19 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
             ) : (
               <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
             )}
+            {!done && (members.length>1 || !it.isNo) && (()=>{
+              const selIds = members.length===1 ? [it.id] : members.filter(m=>qSel[m.id] && !ptIsDone(m)).map(m=>m.id);
+              return (
+                <div className="no-print" style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",margin:"6px 0 4px"}}>
+                  {members.length>1 && <span className="meta" style={{fontSize:11}}>{selIds.length} part dicentang</span>}
+                  <input type="text" placeholder={T2.numLabel+", mis. 1098"} value={qIS[it.id]||""} onChange={e=>setQIS(v=>({...v,[it.id]:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); applyQuickIS(it, selIds); } }} style={{width:170}} />
+                  <button type="button" className="icon-btn" onClick={()=>applyQuickIS(it, selIds)}>Terapkan {T2.numLabel}</button>
+                  {members.length>1 && <button type="button" className="icon-btn" onClick={()=>advanceSelected(it, selIds)}>Maju tahap berikutnya</button>}
+                  {members.length>1 && <span className="meta" style={{cursor:"pointer",textDecoration:"underline",fontSize:11}} onClick={()=>setQSel(sv=>{ const n = {...sv}; members.forEach(m=>{ if(!ptIsDone(m) && !m.isNo) n[m.id] = true; }); return n; })}>centang yang belum ada IS</span>}
+                  {members.length>1 && <span className="meta" style={{cursor:"pointer",textDecoration:"underline",fontSize:11}} onClick={()=>setQSel({})}>kosongkan</span>}
+                </div>
+              );
+            })()}
             <div className="pt-steps">{T2.stages.map((s,i)=><div key={i} title={s} className={"pt-step"+(i<it.stage?" past":"")+(i===it.stage?" now":"")} />)}</div>
             <div className="pt-stage">{mixedStage ? stageSummary : T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
             {(al.length>0 || (anyPre && !done)) && <div className="pt-chips">{anyPre && !done && <span className="pt-chip">Menunggu PO</span>}{al.map((a,i)=><span key={i} className={"pt-chip"+((a.k==="tiba"||a.k==="deal")?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
@@ -4013,7 +4071,7 @@ function MainApp({onDisconnect, binId}){
     setExcoLines(excoBuild(excoInput()));
   };
   const addExcoSuggest = ()=>{
-    const have = {}; excoLines.forEach(l=>{ have[UC(l.name)] = 1; });
+    const have = {}; excoLines.forEach(l=>{ have[excoKey(l.name)] = 1; });
     const extra = excoSuggest(excoInput(), have, 2);
     if(!extra.length){ setInfo("Tidak ada saran customer lain yang tersedia."); return; }
     setExcoLines([...excoLines, ...extra]);
@@ -4032,16 +4090,16 @@ function MainApp({onDisconnect, binId}){
     let base;
     if(q.year===year) base = entriesByKey[q.key] || [];
     else { try{ const r = await window.storage.get("visit_entries_"+q.key); base = (r && r.value) ? JSON.parse(r.value) : []; }catch(e){ base = []; } }
-    const have = {}; base.forEach(e=>{ if(e.type==="call" && e.date===today) have[UC(e.customer)] = 1; });
+    const have = {}; base.forEach(e=>{ if(e.type==="call" && e.date===today) have[excoKey(e.customer)] = 1; });
     const newCusts = []; const objs = []; const savedIds = {}; let skipped = 0; let nid = Date.now();
     sel.forEach(l=>{
-      const nameUp = UC(l.name.trim());
-      if(have[nameUp]){ skipped++; savedIds[l.id] = 1; return; }
-      let cust = customers.find(c=>UC(c.name)===nameUp) || newCusts.find(c=>c.name===nameUp);
+      const nameKey = excoKey(l.name); const nameUp = nameKey;
+      if(have[nameKey]){ skipped++; savedIds[l.id] = 1; return; }
+      let cust = customers.find(c=>excoKey(c.name)===nameKey) || newCusts.find(c=>excoKey(c.name)===nameKey);
       const isNewCust = !cust;
       if(!cust){ cust = {id:"c"+(nid++), name:nameUp, pic:"", phone:"", active:true}; newCusts.push(cust); }
       objs.push({id:nid++, custId:cust.id, customer:cust.name, pic:cust.pic||"", phone:cust.phone||"", type:"call", date:today, note:l.text.trim(), ...(isNewCust ? {isNew:true} : {})});
-      have[nameUp] = 1; savedIds[l.id] = 1;
+      have[nameKey] = 1; savedIds[l.id] = 1;
     });
     if(newCusts.length) persistCustomers([...newCusts, ...customers]);
     if(objs.length){
@@ -5081,7 +5139,7 @@ function MainApp({onDisconnect, binId}){
               {excoLines.length>0 && (
                 <select value="" onChange={e=>{ if(e.target.value) addExcoCustomer(e.target.value); }} style={{maxWidth:220}}>
                   <option value="">+ Tambah customer lain</option>
-                  {customers.filter(c=>c.active!==false && !excoLines.some(l=>UC(l.name)===UC(c.name))).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  {customers.filter(c=>c.active!==false && !excoLines.some(l=>excoKey(l.name)===excoKey(c.name))).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               )}
             </div>
