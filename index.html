@@ -1051,11 +1051,12 @@ function ptBuildFu(it, toCustomer, more){
   if(toCustomer){
     return ["Selamat "+sapa+",", "Kami info, part untuk "+it.customer+" sudah tiba di depo Cilegon:", ...(multi ? all.map(x=>"- "+partTxt(x)) : ["- "+part]), "", "Kira-kira kapan jadwal yang pas untuk pengiriman atau pemasangannya ya? Kami siap sesuaikan dengan jadwal operasional di sana.", "Terimakasih."].join("\n");
   }
-  const what = it.type==="bo" ? ("BO emergency"+(it.isNo ? " "+it.isNo : "")) : (it.isNo ? "pengiriman "+it.isNo : ( (it.type==="indent" ? "order indent" : "request part ke cabang")));
-  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", ...(multi ? ["- Part:"].concat(all.map((x,i)=>"  "+(i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : ""))) : ["- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : [])]), "- Customer: "+it.customer];
+  const isList = Array.from(new Set(all.map(x=>x.isNo).filter(Boolean)));
+  const what = it.type==="bo" ? ("BO emergency"+(it.isNo ? " "+it.isNo : "")) : (isList.length ? "pengiriman "+isList.join(", ") : ( (it.type==="indent" ? "order indent" : "request part ke cabang")));
+  const lines = ["Selamat "+sapa+",", "Mau cek status "+what+" ya:", ...(multi ? ["- Part:"].concat(all.map((x,i)=>"  "+(i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : "")+(x.isNo ? " | "+x.isNo : "")+(x.type==="cabang" && x.branch ? " | dari "+x.branch : ""))) : ["- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : [])]), "- Customer: "+it.customer];
   if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
   if(it.ref) lines.push("- Ref: "+it.ref);
-  if(it.type==="cabang" && it.branch) lines.push("- Asal: "+it.branch);
+  if(!multi && it.type==="cabang" && it.branch) lines.push("- Asal: "+it.branch);
   if(it.eta) lines.push("- ETA sebelumnya: "+ptFmt(it.eta));
   lines.push("", "Sudah sampai mana update-nya? Mohon info estimasi tiba di Cilegon, karena customer menunggu.", "Terimakasih.");
   return lines.join("\n");
@@ -1111,7 +1112,7 @@ function ptBuildOrderMsg(it, more){
   const all = [it].concat(more||[]); const multi = all.length>1;
   const partTxt = x=>((x.partNo||"")+" "+(x.desc||"")).trim() + (x.qty ? " (qty "+x.qty+")" : "");
   if(it.type==="cabang"){
-    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", ...(multi ? ["- Part:"].concat(all.map((x,i)=>"  "+(i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : ""))) : ["- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : [])]), "- Customer: "+it.customer];
+    const lines = ["Selamat "+sapa+",", "Mau minta tolong stock berikut dikirim ke Cilegon lebih dulu"+(ptPreDeal(it) ? " untuk mempercepat proses, PO customer masih berjalan" : "")+":", ...(multi ? ["- Part:"].concat(all.map((x,i)=>"  "+(i+1)+". "+partTxt(x)+(x.agc ? " | AGC "+x.agc : "")+(x.branch ? " | dari "+x.branch : ""))) : ["- Part: "+part, ...(it.agc ? ["- AGC: "+it.agc] : [])]), "- Customer: "+it.customer];
     if(it.quoNo) lines.push("- Penawaran: "+it.quoNo);
     lines.push("", "Mohon info No. IS-nya kalau sudah terbit ya.", "Terimakasih.");
     return lines.join("\n");
@@ -1155,6 +1156,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
   const [uDesc,setUDesc] = useState("");
   const [uQty,setUQty] = useState("");
   const [uAll,setUAll] = useState(true);
+  const [uSel,setUSel] = useState({});
   const [copiedId,setCopiedId] = useState(null);
   const [fQuo,setFQuo] = useState("");
   const [fDeal,setFDeal] = useState("deal");
@@ -1202,9 +1204,9 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     }
     return b;
   };
-  // Satu penawaran = satu kartu: part dengan jenis, customer, nomor penawaran (REV dianggap sama), tahap, dan status yang sama dikelompokkan
+  // Satu penawaran = satu kartu. Tiap part boleh punya No. IS dan tahap sendiri (cabang kirim IS terpisah, part menyusul di IS lain)
   const ckey = it => it.quoNo
-    ? ["q", it.type, String(it.customer||"").trim().toUpperCase(), ptBaseNo(it.quoNo), (it.type==="cabang" ? (it.branch||"") : ""), it.stage, it.isNo||"", it.dealStatus||""].join("|")
+    ? ["q", it.type, String(it.customer||"").trim().toUpperCase(), ptBaseNo(it.quoNo)].join("|")
     : (it.isNo ? ["i", it.type, String(it.customer||"").trim().toUpperCase(), it.isNo, it.stage].join("|") : "id|"+it.id);
   const clusterOf = it => items.filter(x=>x.id!==it.id && PART_TYPES[x.type] && !ptIsDone(x) && ckey(x)===ckey(it));
   const markDeal = it=>{
@@ -1245,10 +1247,13 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
     });
     onChange(next);
   };
-  const openUpdate = (it, stage)=>{
+  const openUpdate = (it, stage, only)=>{
     setUpId(it.id); setUStage(stage!=null?stage:it.stage); setUDate(today); setUNote("");
     setUIS(it.isNo||""); setUEta(it.eta||""); setUCust(it.customer||""); setUPartNo(it.partNo||""); setUDesc(it.desc||""); setUQty(it.qty||""); setUQuo(it.quoNo||""); setULead(it.leadDays||"");
     setUAll(true);
+    const sel = {}; sel[it.id] = true;
+    if(!only) groupOf(it).forEach(x=>{ if(x.stage===it.stage) sel[x.id] = true; });
+    setUSel(sel);
   };
   // Masukkan part indent / stock cabang hasil baca penawaran (dari Tracker atau dari PDF) ke tracking; part yang sudah ada dilewati
   const importCands = (meta, cands)=>{
@@ -1301,15 +1306,14 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
   const quickAdvance = it=>{
     const T2 = PART_TYPES[it.type]; const ns = it.stage+1;
     // Masuk tahap "dikirim" tapi No. IS belum ada: buka form update supaya IS-nya diisi dulu
-    if(T2.isFrom!=null && ns>=T2.isFrom && ns<T2.stages.length-1 && !it.isNo){ openUpdate(it, ns); return; }
-    const ids = [it.id].concat(groupOf(it).map(x=>x.id));
+    if(T2.isFrom!=null && ns>=T2.isFrom && ns<T2.stages.length-1 && [it].concat(groupOf(it).filter(x=>x.stage===it.stage)).some(x=>!x.isNo)){ openUpdate(it, ns); return; }
+    const ids = [it.id].concat(groupOf(it).filter(x=>x.stage===it.stage).map(x=>x.id));
     applyStage(ids, ns, "", today);
   };
   const saveUpdate = it=>{
     const T2 = PART_TYPES[it.type];
     const is = ptNormNo(it.type, uIS);
-    const grp = uAll ? groupOf(it) : [];
-    const ids = [it.id].concat(grp.map(x=>x.id));
+    const ids = [it.id].concat(Object.keys(uSel).filter(k=>uSel[k] && k!==it.id));
     const next = items.map(x=>{
       if(ids.indexOf(x.id)<0) return x;
       let base = {...x, stage:uStage, history:[...(x.history||[]), {date:uDate||today, stage:uStage, note:uNote.trim()}]};
@@ -1445,21 +1449,31 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
         return (
         <Panel key={tk} id={"pt_grp_"+tk} defaultOpen={true} style={{marginBottom:14}} title={PART_TYPES[tk].label+" ("+grows.length+" part"+(buildClusters(grows).length<grows.length ? " dalam "+buildClusters(grows).length+" kartu" : "")+")"} hint="(klik untuk buka/tutup)">
         {buildClusters(grows).map(c=>{
-        const it = c.rows[0].it; const members = c.rows.map(r=>r.it); const rest = members.slice(1);
+        const members = c.rows.map(r=>r.it);
+        const activeMs = members.filter(m=>!ptIsDone(m));
+        const it = activeMs.length ? activeMs.slice().sort((a,b)=>a.stage-b.stage)[0] : members[0];
+        const batch = activeMs.filter(m=>m.stage===it.stage); const rest = batch.filter(m=>m.id!==it.id);
         const al = []; c.rows.forEach(r=>r.al.forEach(a=>{ if(!al.some(z=>z.text===a.text)) al.push(a); }));
         const upIt = members.find(m=>m.id===upId);
-        const T2 = PART_TYPES[it.type]; const done = ptIsDone(it);
+        const T2 = PART_TYPES[it.type]; const done = activeMs.length===0;
         const sev = al.reduce((m,x)=>Math.max(m,x.sev),0);
-        const arrived = !done && it.stage===T2.stages.length-2;
+        const arrivedMs = activeMs.filter(m=>m.stage===T2.stages.length-2); const arrived = arrivedMs.length>0;
+        const anyPre = activeMs.some(m=>ptPreDeal(m));
         const grp = groupOf(it);
+        const isList = Array.from(new Set(members.map(m=>m.isNo).filter(Boolean)));
+        const mixedIS = new Set(members.map(m=>m.isNo||"")).size>1;
+        const mixedStage = new Set(members.map(m=>m.stage)).size>1;
+        const brSet = Array.from(new Set(members.map(m=>m.branch).filter(Boolean)));
+        const stageSummary = (()=>{ const cnt={}; members.forEach(m=>{ cnt[m.stage]=(cnt[m.stage]||0)+1; }); return Object.keys(cnt).map(Number).sort((a,b)=>a-b).map(sg=>T2.stages[sg]+" ("+cnt[sg]+" part)").join(" | "); })();
         const nextLabel = !done ? T2.stages[it.stage+1] : "";
         const hist = it.history||[];
         return (
           <div key={it.id} className={"pt-card "+(done?"done":"al"+sev)}>
             <div className="pt-head">
               <span className={"pt-tag "+it.type}>{T2.short}</span>
-              {it.isNo ? <span className="pt-is">{it.isNo}</span> : (it.type==="bo" ? <span className="pt-noIS">No. BO belum diisi, FU manual</span> : <span className="pt-noIS">IS belum ada</span>)}
+              {isList.length ? <span className="pt-is">{isList.join(", ")}</span> : (it.type==="bo" ? <span className="pt-noIS">No. BO belum diisi, FU manual</span> : <span className="pt-noIS">IS belum ada</span>)}
               {members.length>1 && <span className="meta" style={{fontSize:11,fontWeight:700}}>{members.length} part dalam satu penawaran</span>}
+              {isList.length>0 && members.some(m=>!m.isNo) && <span className="pt-noIS">sebagian part belum ada {T2.numLabel||"No. IS"}</span>}
               {(()=>{ const extra = grp.filter(x=>!members.some(m=>m.id===x.id)).length; return extra>0 ? <span className="meta" style={{fontSize:11,color:"var(--muted)"}}>+{extra} part lain di nomor ini</span> : null; })()}
             </div>
             <div className="pt-cust">{it.customer}</div>
@@ -1467,27 +1481,27 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
               <div className="pt-part">
               {members.map((m,i)=>(
                 <div key={m.id} style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
-                  <span>{(i+1)+". "+(m.partNo?m.partNo+" ":"")+(m.desc||"")}{m.qty?" | qty "+m.qty:""}{m.agc?" | AGC "+m.agc:""}{m.type==="indent"&&m.origin?" ("+m.origin+")":""}{m.type==="indent"&&m.leadDays?" | est. "+m.leadDays+" hari":""}</span>
-                  {!done && <span className="no-print" style={{cursor:"pointer",textDecoration:"underline",fontSize:11}} onClick={()=>upId===m.id?setUpId(null):openUpdate(m)}>edit</span>}
+                  <span>{(i+1)+". "+(m.partNo?m.partNo+" ":"")+(m.desc||"")}{m.qty?" | qty "+m.qty:""}{m.agc?" | AGC "+m.agc:""}{m.type==="indent"&&m.origin?" ("+m.origin+")":""}{m.type==="indent"&&m.leadDays?" | est. "+m.leadDays+" hari":""}{brSet.length>1&&m.branch?" | dari "+m.branch:""}{mixedIS?" | "+(m.isNo||"belum ada IS"):""}{mixedStage?" | "+T2.stages[m.stage]:""}</span>
+                  {!done && <span className="no-print" style={{cursor:"pointer",textDecoration:"underline",fontSize:11}} onClick={()=>upId===m.id?setUpId(null):openUpdate(m,undefined,true)}>edit</span>}
                   <span className="no-print" style={{cursor:"pointer",color:"var(--red)",fontSize:11}} onClick={()=>remove(m)}>hapus</span>
                 </div>
               ))}
-              <div style={{marginTop:2}}>{it.quoNo?"penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}</div>
+              <div style={{marginTop:2}}>{it.quoNo?"penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{brSet.length===1?" | dari "+brSet[0]:""}</div>
             </div>
             ) : (
               <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
             )}
             <div className="pt-steps">{T2.stages.map((s,i)=><div key={i} title={s} className={"pt-step"+(i<it.stage?" past":"")+(i===it.stage?" now":"")} />)}</div>
-            <div className="pt-stage">{T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
-            {(al.length>0 || (ptPreDeal(it) && !done)) && <div className="pt-chips">{ptPreDeal(it) && !done && <span className="pt-chip">Menunggu PO</span>}{al.map((a,i)=><span key={i} className={"pt-chip"+((a.k==="tiba"||a.k==="deal")?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
+            <div className="pt-stage">{mixedStage ? stageSummary : T2.stages[it.stage]} <span>| update terakhir {ptFmt(ptLastDate(it))}{it.eta && !done ? " | ETA "+ptFmt(it.eta) : ""}</span></div>
+            {(al.length>0 || (anyPre && !done)) && <div className="pt-chips">{anyPre && !done && <span className="pt-chip">Menunggu PO</span>}{al.map((a,i)=><span key={i} className={"pt-chip"+((a.k==="tiba"||a.k==="deal")?" g":(a.k==="telat"?" r":""))}>{a.text}</span>)}</div>}
 
             <div className="pt-actions no-print">
-              {!done && ptPreDeal(it) && <button type="button" className="icon-btn" onClick={()=>markDeal(it)}>Sudah deal / PO masuk</button>}
+              {!done && anyPre && <button type="button" className="icon-btn" onClick={()=>markDeal(it)}>Sudah deal / PO masuk</button>}
               {!done && it.stage===0 && (it.type==="cabang" || it.type==="indent") && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildOrderMsg(it, rest), it.id+"o")}>{copiedId===it.id+"o" ? "Tersalin" : (it.type==="cabang" ? "Salin pesan minta kirim stock" : "Salin pesan proses indent")}</button>}
-              {!done && <button type="button" className="icon-btn" onClick={()=>quickAdvance(it)}>{it.stage+1===T2.stages.length-1 ? "Sudah diserahkan" : "Maju: "+nextLabel}{grp.length>0?" ("+(grp.length+1)+" part)":""}</button>}
+              {!done && <button type="button" className="icon-btn" onClick={()=>quickAdvance(it)}>{it.stage+1===T2.stages.length-1 ? "Sudah diserahkan" : "Maju: "+nextLabel}{batch.length>1?" ("+batch.length+" part)":""}</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>upId===it.id?setUpId(null):openUpdate(it)}>Update / Catat FU</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,false,rest), it.id)}>{copiedId===it.id?"Tersalin":"Salin pesan FU"}</button>}
-              {arrived && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,true,rest), it.id+"c")}>{copiedId===it.id+"c"?"Tersalin":"Salin info ke customer"}</button>}
+              {arrived && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(arrivedMs[0],true,arrivedMs.slice(1)), it.id+"c")}>{copiedId===it.id+"c"?"Tersalin":"Salin info ke customer"}</button>}
               <button type="button" className="icon-btn" onClick={()=>setHistId(histId===it.id?null:it.id)}>Riwayat ({hist.length})</button>
               {!done && dupGroups(members).length>0 && <button type="button" className="icon-btn" onClick={()=>mergeDup(members)}>Rapikan part dobel</button>}
               <button type="button" className="icon-btn danger" onClick={()=>members.length>1 ? removeMany(members) : remove(it)}>{members.length>1 ? "Hapus semua ("+members.length+")" : "Hapus"}</button>
@@ -1509,10 +1523,15 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
                   <div><label>Qty</label><input type="text" value={uQty} onChange={e=>setUQty(e.target.value)} /></div>
                 </div>
                 {grp.length>0 && (
-                  <label style={{textTransform:"none",letterSpacing:0,fontSize:12,display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
-                    <input type="checkbox" checked={uAll} onChange={e=>setUAll(e.target.checked)} style={{width:"auto"}} />
-                    Terapkan status dan No. IS ke {grp.length} part lain yang satu nomor dan tahapnya sama
-                  </label>
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontWeight:700,fontSize:12,marginBottom:4}}>Terapkan status, No. IS, dan ETA ke part:</div>
+                    {[it].concat(grp).map(x=>(
+                      <label key={x.id} style={{textTransform:"none",letterSpacing:0,fontSize:12,display:"flex",gap:8,alignItems:"center",marginBottom:3}}>
+                        <input type="checkbox" checked={x.id===it.id ? true : !!uSel[x.id]} disabled={x.id===it.id} onChange={e=>setUSel(sv=>({...sv,[x.id]:e.target.checked}))} style={{width:"auto"}} />
+                        <span>{(x.partNo?x.partNo+" ":"")+(x.desc||"")+(x.qty?" (qty "+x.qty+")":"")} <span style={{color:"var(--muted)"}}>| {T2.stages[x.stage]}{x.isNo?" | "+x.isNo:""}</span></span>
+                      </label>
+                    ))}
+                  </div>
                 )}
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   <button type="button" className="export-btn" onClick={()=>saveUpdate(it)}>Simpan Update</button>
