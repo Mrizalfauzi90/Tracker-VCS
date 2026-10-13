@@ -1043,6 +1043,119 @@ function ptExtractFromQuotation(q){
   return out;
 }
 function ptBaseNo(n){ return String(n||"").trim().toUpperCase().replace(/\s*REV(ISI)?\s*\d*$/,""); }
+
+// ===== Draft Exco: susun kegiatan hari ini dari penawaran dan Tracking Part =====
+function excoTitle(name){
+  const KEEP = {"PT":1,"CV":1,"UD":1,"NSI":1,"BMP":1,"BICC":1,"JM":1};
+  return String(name||"").trim().split(/\s+/).map(w=>{
+    const core = w.replace(/[.,]+$/,"");
+    if(KEEP[core.toUpperCase()]) return core.toUpperCase()+w.slice(core.length);
+    return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
+  }).join(" ");
+}
+function excoPartName(desc){
+  const sx = String(desc||"").trim(); if(!sx) return "";
+  const i = sx.indexOf(","); let nm = sx;
+  if(i>0){ const head = sx.slice(0,i).trim(); if(/^[0-9A-Za-z][0-9A-Za-z\-\/\.]{3,}$/.test(head) && /\d/.test(head)) nm = sx.slice(i+1); }
+  return nm.replace(/,+/g," ").replace(/\s+/g," ").trim().toLowerCase();
+}
+function excoJoin(a){ a = a.filter(Boolean); if(a.length<=1) return a[0]||""; if(a.length===2) return a[0]+" dan "+a[1]; return a.slice(0,-1).join(", ")+", dan "+a[a.length-1]; }
+function excoLabel(names, max){
+  const u = []; names.forEach(n=>{ if(n && u.indexOf(n)<0) u.push(n); });
+  if(u.length>max) return excoJoin(u.slice(0,max-1).concat(["part lainnya"]));
+  return excoJoin(u);
+}
+function excoQuoLabel(q){
+  const sp = q.format==="ais" ? (q.aisRows||[]) : (q.spareParts||[]);
+  const co = q.format==="ais" ? [] : (q.consumable||[]);
+  const sv = q.format==="ais" ? [] : (q.service||[]);
+  const nm = sp.concat(co).map(r=>excoPartName(r && r.desc)).filter(Boolean);
+  if(nm.length) return excoLabel(nm,3);
+  if(sv.some(r=>r && String(r.desc||"").trim())) return "jasa service";
+  return "kebutuhan part";
+}
+function excoQuoText(q, kind){
+  const label = excoQuoLabel(q);
+  const unit = q.model ? " unit "+String(q.model).trim().split(/[\s\-]/)[0].toUpperCase() : "";
+  if(kind==="deal") return "Confirm PO quotation "+label+unit+" dan koordinasi jadwal pengiriman.";
+  if(kind==="rev") return "Follow up revisi quotation "+label+unit+".";
+  if(kind==="fu") return "Follow up quotation "+label+unit+".";
+  return "Submit quotation "+label+unit+", sekaligus gali kebutuhan lainnya.";
+}
+function excoItemName(x){ return String(x.desc||x.partNo||"").replace(/,+/g," ").replace(/\s+/g," ").trim().toLowerCase(); }
+function excoPtSents(items, short){
+  const nm = excoItemName;
+  const lab = arr=>short ? "" : " "+excoLabel(arr.map(nm),3);
+  const arrived = items.filter(x=>PART_TYPES[x.type] && x.stage===PART_TYPES[x.type].stages.length-2);
+  const rest = items.filter(x=>arrived.indexOf(x)<0);
+  const cab = rest.filter(x=>x.type==="cabang"), ind = rest.filter(x=>x.type==="indent"), bo = rest.filter(x=>x.type==="bo");
+  const out = [];
+  if(arrived.length) out.push("Info part"+lab(arrived)+" sudah tiba di Cilegon dan koordinasi jadwal serah terima.");
+  if(cab.length) out.push("Update pengiriman part"+lab(cab)+" dari cabang.");
+  if(ind.length) out.push("Update estimasi tiba part"+lab(ind)+" (indent).");
+  if(bo.length) out.push("Update BO part"+lab(bo)+".");
+  return out;
+}
+function excoMerge(a,b){ return String(a).replace(/\.\s*$/,"")+", serta "+b.charAt(0).toLowerCase()+b.slice(1); }
+function excoNew(cust, text, basis, checked, saved){
+  return {id:"x"+Date.now()+Math.floor(Math.random()*100000), name:excoTitle(cust), text, basis, checked:!!checked, saved:!!saved};
+}
+const EXCO_GENERIC = ["Gali kebutuhan part dan service periodik unit.","Diskusi kebutuhan part dan jadwal service unit.","Menggali kembali kebutuhan part dan service unit.","Follow up kebutuhan part repeat order dan jadwal service."];
+function excoSuggest(o, have, need){
+  const K = n=>String(n||"").trim().toUpperCase();
+  const out = []; const h = Object.assign({}, have);
+  const push = (cust, text)=>{ if(out.length>=need) return; const k = K(cust); if(!k || h[k]) return; h[k]=1; out.push(excoNew(cust, text, "saran", false, false)); };
+  (o.fuQuotes||[]).forEach(q=>push(q.customerName, excoQuoText(q,"fu")));
+  const byC = {}; (o.parts||[]).forEach(it=>{ const k = K(it.customer); if(!k) return; (byC[k] = byC[k] || {name:it.customer, items:[]}).items.push(it); });
+  Object.keys(byC).forEach(k=>{ const sn = excoPtSents(byC[k].items); if(sn.length) push(byC[k].name, sn.join(" ")); });
+  const last = {}; (o.entriesAll||[]).forEach(e=>{ const k = K(e.customer); if(e.date && (!last[k] || e.date>last[k])) last[k] = e.date; });
+  let gi = 0;
+  (o.customers||[]).filter(c=>c && c.active!==false && c.name).slice()
+    .sort((a,b)=>(last[K(a.name)]||"").localeCompare(last[K(b.name)]||""))
+    .forEach(c=>{ push(c.name, EXCO_GENERIC[gi++ % EXCO_GENERIC.length]); });
+  return out;
+}
+function excoBuild(o){
+  const K = n=>String(n||"").trim().toUpperCase();
+  const dOf = iso=>{ try{ const d = new Date(iso); return isNaN(d) ? "" : localISO(d); }catch(e){ return ""; } };
+  const order = []; const qByC = {}; const pByC = {}; const eByC = {};
+  (o.quotes||[]).slice().sort((a,b)=>String(b.savedAt||"").localeCompare(String(a.savedAt||""))).forEach(q=>{
+    const st = o.statusOf(q); if(st==="lost") return;
+    const savedToday = dOf(q.savedAt)===o.today, fuToday = q.followUpAt===o.today, dealToday = st==="deal" && q.statusAt===o.today;
+    if(!(savedToday || fuToday || dealToday)) return;
+    const isRev = /REV/i.test(String(q.docNo||"")) || !!q.aisRev;
+    const kind = dealToday ? "deal" : (isRev ? "rev" : (fuToday ? "fu" : "new"));
+    const k = K(q.customerName); if(!k) return;
+    if(!qByC[k]){ qByC[k] = {name:q.customerName, sents:[], labels:[]}; order.push(k); }
+    if(qByC[k].sents.length<2){ qByC[k].sents.push(excoQuoText(q, kind)); qByC[k].labels.push(excoQuoLabel(q)); }
+  });
+  (o.parts||[]).forEach(it=>{
+    const touched = (it.history||[]).some(hh=>hh && hh.date===o.today) || dOf(it.createdAt)===o.today;
+    if(!touched) return; const k = K(it.customer); if(!k) return;
+    (pByC[k] = pByC[k] || {name:it.customer, items:[]}).items.push(it);
+    if(order.indexOf(k)<0) order.push(k);
+  });
+  (o.callToday||[]).forEach(e=>{ const k = K(e.customer); if(!k) return; eByC[k] = e; if(order.indexOf(k)<0) order.push(k); });
+  const lines = [];
+  order.forEach(k=>{
+    const q = qByC[k], p = pByC[k], e = eByC[k];
+    const ts = p ? excoPtSents(p.items, !!(q && p.items.every(x=>q.labels.some(lb=>lb.indexOf(excoItemName(x))>=0)))) : [];
+    let text = "";
+    if(q){
+      text = q.sents[0];
+      if(ts.length) text = excoMerge(text, ts[0]);
+      const more = q.sents.slice(1).concat(ts.slice(1));
+      if(more.length) text += " "+more.join(" ");
+    } else text = ts.join(" ");
+    const name = (q && q.name) || (p && p.name) || (e && e.customer);
+    if(e) lines.push(excoNew(name, (e.note && String(e.note).trim()) ? String(e.note).trim() : (text || "Follow up kebutuhan part dan service."), "catatan", true, true));
+    else lines.push(excoNew(name, text, q ? "penawaran" : "tracking", false, false));
+  });
+  const need = Math.max(0, (o.minN||4) - lines.length);
+  if(need>0){ const hv = {}; lines.forEach(l=>{ hv[K(l.name)] = 1; }); excoSuggest(o, hv, need).forEach(l=>lines.push(l)); }
+  return lines;
+}
+
 function ptBuildFu(it, toCustomer, more){
   const h = new Date().getHours(); const sapa = h<11 ? "pagi" : (h<15 ? "siang" : (h<18 ? "sore" : "malam"));
   const part = ((it.partNo||"")+" "+(it.desc||"")).trim() + (it.qty ? " (qty "+it.qty+")" : "");
@@ -1896,6 +2009,7 @@ function MainApp({onDisconnect, binId}){
   const [odoExpanded,setOdoExpanded] = useState(false);
   const [odoSearch,setOdoSearch] = useState("");
   const [entriesExpanded,setEntriesExpanded] = useState(false);
+  const [excoLines,setExcoLines] = useState([]);
   const [entriesSearch,setEntriesSearch] = useState("");
   const [mainView,setMainView] = useState("input");
 
@@ -3883,6 +3997,63 @@ function MainApp({onDisconnect, binId}){
   const fuDraft = fuDraftQ ? buildFuDraft(fuDraftQ) : null;
   const quotationsSorted = [...quotationsFiltered].sort((a,b)=> (b.savedAt||"").localeCompare(a.savedAt||""));
 
+  // ===== Draft Exco hari ini =====
+  const excoInput = ()=>{
+    const today = todayStr();
+    return {
+      today, minN:4, statusOf:quoStatus, fuQuotes:fuList, customers,
+      quotes: Object.values(quotationsByKey).flat().filter(q=>q && q.customerName),
+      parts: partItems.filter(it=>PART_TYPES[it.type] && !ptIsDone(it)),
+      callToday: (entriesByKey[quarterKeyForDate(today).key]||[]).filter(e=>e.type==="call" && e.date===today),
+      entriesAll: Object.values(entriesByKey).flat()
+    };
+  };
+  const buildExco = ()=>{
+    if(excoLines.length && !window.confirm("Susun ulang akan mengganti draft Exco yang sekarang. Lanjut?")) return;
+    setExcoLines(excoBuild(excoInput()));
+  };
+  const addExcoSuggest = ()=>{
+    const have = {}; excoLines.forEach(l=>{ have[UC(l.name)] = 1; });
+    const extra = excoSuggest(excoInput(), have, 2);
+    if(!extra.length){ setInfo("Tidak ada saran customer lain yang tersedia."); return; }
+    setExcoLines([...excoLines, ...extra]);
+  };
+  const addExcoCustomer = (custId)=>{
+    const c = customers.find(x=>x.id===custId); if(!c) return;
+    setExcoLines([...excoLines, excoNew(c.name, EXCO_GENERIC[excoLines.length % EXCO_GENERIC.length], "saran", false, false)]);
+  };
+  const excoPatch = (id, patch)=>setExcoLines(ls=>ls.map(l=>l.id===id ? {...l, ...patch} : l));
+  const excoWaText = ()=>excoLines.filter(l=>l.checked && l.text.trim()).map(l=>"*"+l.name.trim()+"*\n"+l.text.trim()).join("\n\n");
+  const saveExcoToCalls = async()=>{
+    const today = todayStr();
+    const sel = excoLines.filter(l=>l.checked && !l.saved && l.text.trim() && l.name.trim());
+    if(!sel.length){ setInfo("Belum ada kegiatan yang dicentang untuk disimpan ke Laporan Call."); return; }
+    const q = quarterKeyForDate(today);
+    let base;
+    if(q.year===year) base = entriesByKey[q.key] || [];
+    else { try{ const r = await window.storage.get("visit_entries_"+q.key); base = (r && r.value) ? JSON.parse(r.value) : []; }catch(e){ base = []; } }
+    const have = {}; base.forEach(e=>{ if(e.type==="call" && e.date===today) have[UC(e.customer)] = 1; });
+    const newCusts = []; const objs = []; const savedIds = {}; let skipped = 0; let nid = Date.now();
+    sel.forEach(l=>{
+      const nameUp = UC(l.name.trim());
+      if(have[nameUp]){ skipped++; savedIds[l.id] = 1; return; }
+      let cust = customers.find(c=>UC(c.name)===nameUp) || newCusts.find(c=>c.name===nameUp);
+      const isNewCust = !cust;
+      if(!cust){ cust = {id:"c"+(nid++), name:nameUp, pic:"", phone:"", active:true}; newCusts.push(cust); }
+      objs.push({id:nid++, custId:cust.id, customer:cust.name, pic:cust.pic||"", phone:cust.phone||"", type:"call", date:today, note:l.text.trim(), ...(isNewCust ? {isNew:true} : {})});
+      have[nameUp] = 1; savedIds[l.id] = 1;
+    });
+    if(newCusts.length) persistCustomers([...newCusts, ...customers]);
+    if(objs.length){
+      const next = [...objs, ...base];
+      setEntriesByKey(prev=>({...prev,[q.key]:next}));
+      try{ await window.storage.set("visit_entries_"+q.key, JSON.stringify(next)); }
+      catch(e){ setErr("Gagal menyimpan catatan. Detail: " + (e && e.message ? e.message : String(e))); return; }
+    }
+    setExcoLines(ls=>ls.map(l=> savedIds[l.id] ? {...l, saved:true} : l));
+    setInfo(objs.length+" kegiatan masuk ke Laporan Call tanggal "+today+(skipped ? ", "+skipped+" dilewati karena customernya sudah tercatat Call hari ini" : "")+(newCusts.length ? ". "+newCusts.length+" customer baru ikut ditambahkan ke daftar customer" : "")+".");
+  };
+
   // ===== Cek Validasi Kalkulasi (logika lokal, instan, tanpa API luar) =====
   const [validationResult,setValidationResult] = useState(null);
   const runValidation = ()=>{
@@ -4897,6 +5068,51 @@ function MainApp({onDisconnect, binId}){
       {view==="log" && (
         <React.Fragment>
           <h2 className="section">Catat Kunjungan / Call — {quarter.label}</h2>
+
+          <div className="no-print" style={{background:"#fff",border:"2px solid var(--ink)",padding:"12px 14px",marginBottom:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+              <div style={{fontFamily:"var(--sans)",fontWeight:800,fontSize:13}}>Draft Exco Hari Ini</div>
+              <div className="meta">{excoLines.filter(l=>l.checked).length} dicentang dari {excoLines.length} | minimal 4 customer per hari</div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"8px 0"}}>
+              <button type="button" className="icon-btn" onClick={buildExco}>Susun dari aktivitas hari ini</button>
+              {excoLines.length>0 && <button type="button" className="icon-btn" onClick={()=>setExcoLines(ls=>ls.map(l=>({...l,checked:true})))}>Centang semua</button>}
+              {excoLines.length>0 && <button type="button" className="icon-btn" onClick={addExcoSuggest}>Tambah saran customer</button>}
+              {excoLines.length>0 && (
+                <select value="" onChange={e=>{ if(e.target.value) addExcoCustomer(e.target.value); }} style={{maxWidth:220}}>
+                  <option value="">+ Tambah customer lain</option>
+                  {customers.filter(c=>c.active!==false && !excoLines.some(l=>UC(l.name)===UC(c.name))).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              )}
+            </div>
+            {excoLines.length===0 && <div className="meta">Klik "Susun dari aktivitas hari ini". Dasarnya penawaran yang kamu simpan, revisi, atau tandai Sudah FU hari ini, dan part yang di-update di Tracking Part. Kalau kurang dari 4 customer, ditambah saran. Semua kegiatan lewat WA tetap dihitung Call.</div>}
+            {excoLines.map(l=>(
+              <div key={l.id} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:10,padding:"8px 0",borderTop:"1px solid var(--line)",alignItems:"start"}}>
+                <input type="checkbox" checked={l.checked} disabled={l.saved} onChange={e=>excoPatch(l.id,{checked:e.target.checked})} style={{width:"auto",marginTop:6}} />
+                <div>
+                  <input type="text" value={l.name} disabled={l.saved} onChange={e=>excoPatch(l.id,{name:e.target.value})} style={{fontWeight:700,width:"100%"}} />
+                  <textarea value={l.text} rows={2} disabled={l.saved} onChange={e=>excoPatch(l.id,{text:e.target.value})} style={{width:"100%",marginTop:4}} />
+                  <div className="meta" style={{fontSize:11}}>{l.saved ? "Sudah masuk Laporan Call" : (l.basis==="penawaran" ? "Dari penawaran hari ini" : (l.basis==="tracking" ? "Dari Tracking Part hari ini" : (l.basis==="catatan" ? "Sudah tercatat Call hari ini" : "Saran, isi kegiatan karangan. Edit sesuai kenyataan sebelum dicentang")))}</div>
+                </div>
+                {!l.saved && <span style={{cursor:"pointer",color:"var(--red)",fontSize:11,marginTop:6}} onClick={()=>setExcoLines(ls=>ls.filter(x=>x.id!==l.id))}>hapus</span>}
+              </div>
+            ))}
+            {excoLines.length>0 && (
+              <div style={{marginTop:8,borderTop:"1px solid var(--line)",paddingTop:8}}>
+                {excoLines.filter(l=>l.checked).length<4 && <div className="meta" style={{color:"var(--red)",fontWeight:700,marginBottom:6}}>Baru {excoLines.filter(l=>l.checked).length} customer dicentang, minimal 4.</div>}
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <button type="button" className="icon-btn" onClick={()=>copyToClipboard(excoWaText(), "Teks Exco")}>Salin untuk WA</button>
+                  <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={saveExcoToCalls}>Simpan ke Laporan Call ({excoLines.filter(l=>l.checked && !l.saved).length})</button>
+                </div>
+                {copyFeedback && <div className="meta" style={{marginTop:6}}>{copyFeedback}</div>}
+                <details style={{marginTop:8}}>
+                  <summary style={{cursor:"pointer",fontSize:12,fontFamily:"var(--sans)",fontWeight:700}}>Lihat teks WA</summary>
+                  <pre style={{whiteSpace:"pre-wrap",fontSize:12,margin:"6px 0 0"}}>{excoWaText() || "Belum ada yang dicentang."}</pre>
+                </details>
+              </div>
+            )}
+          </div>
+
           <div className="tabs">
             <div className={"tab-btn"+(!addingNew?" on":"")} onClick={()=>setAddingNew(false)}>Customer Terdaftar</div>
             <div className={"tab-btn"+(addingNew?" on":"")} onClick={()=>setAddingNew(true)}>Prospek Baru</div>
