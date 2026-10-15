@@ -2688,6 +2688,32 @@ function MainApp({onDisconnect, binId}){
     setEditId(null);
   };
   const cancelEdit = ()=> setEditId(null);
+  // Rapikan daftar customer: buang kode depan (mis. N00004-) dan gabungkan nama ganda jadi satu
+  const tidyCustomers = ()=>{
+    const stripCode = n => String(n||"").replace(/^[A-Z]\d{3,6}\s*-\s*/i,"").replace(/\s+/g," ").trim();
+    const hasCode = c => /^[A-Z]\d{3,6}\s*-/i.test(String(c.name||"").trim());
+    const score = c => (c.active!==false?100:0) + (hasCode(c)?0:10) + (c.pic?1:0) + (c.phone?1:0) + (c.address?1:0);
+    const order = []; const groups = {};
+    customers.forEach(c=>{ const k = unitKey(c.name); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(c); });
+    let removed = 0, renamed = 0; const out = [];
+    order.forEach(k=>{
+      const g = groups[k];
+      let keep = g[0]; g.forEach(c=>{ if(score(c)>score(keep)) keep = c; });
+      const merged = {...keep};
+      g.forEach(c=>{
+        if(c===keep) return;
+        removed++;
+        ["pic","phone","address"].forEach(f=>{ if(!merged[f] && c[f]) merged[f] = c[f]; });
+        if(c.active!==false) merged.active = true;
+      });
+      if(hasCode(merged)){ merged.name = stripCode(merged.name).toUpperCase(); renamed++; }
+      out.push(merged);
+    });
+    if(removed===0 && renamed===0){ setInfo("Daftar customer sudah rapi, tidak ada kode depan atau nama ganda."); return; }
+    if(!window.confirm(renamed+" nama dibuang kode depannya, "+removed+" nama ganda digabung jadi satu. Lanjutkan?")) return;
+    persistCustomers(out);
+    setInfo("Selesai: "+renamed+" nama dirapikan, "+removed+" nama ganda digabung.");
+  };
   const deactivateCustomer = (id)=> persistCustomers(customers.map(c=> c.id===id ? {...c, active:false} : c));
   const reactivateCustomer = (id)=> persistCustomers(customers.map(c=> c.id===id ? {...c, active:true} : c));
 
@@ -5299,6 +5325,9 @@ function MainApp({onDisconnect, binId}){
           <h2 className="section">Kelola Daftar Customer</h2>
           <div className="search-box">
             <input type="text" placeholder="Cari nama customer..." value={search} onChange={e=>setSearch(e.target.value)} />
+          </div>
+          <div style={{margin:"8px 0"}}>
+            <button className="icon-btn" onClick={tidyCustomers}>Rapikan nama ganda dan kode depan (N00004-)</button>
           </div>
           {filteredManageList.map(c=>(
             editId===c.id ? (
