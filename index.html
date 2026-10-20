@@ -3215,6 +3215,9 @@ function MainApp({onDisconnect, binId}){
 
   const addQuoAisRow = ()=> setQuoAisRows(prev=>[...prev, {agc:"24", desc:"", qty:"", unitPrice:""}]);
   const removeQuoAisRow = (idx)=> setQuoAisRows(prev=> prev.length>1 ? prev.filter((_,i)=>i!==idx) : prev);
+  const moveQuoAisRow = (idx, dir)=> setQuoAisRows(prev=>{ const j=idx+dir; if(j<0||j>=prev.length) return prev; const a=[...prev]; const t=a[idx]; a[idx]=a[j]; a[j]=t; return a; });
+  const moveTopQuoAisRow = (idx)=> setQuoAisRows(prev=>{ if(idx<=0||idx>=prev.length) return prev; const a=[...prev]; const t=a.splice(idx,1)[0]; a.unshift(t); return a; });
+  const rowMoveBtn = {cursor:"pointer",fontWeight:800,fontSize:14,lineHeight:1,padding:"2px 5px",border:"1px solid var(--ink)",background:"#fff",userSelect:"none"};
   const updateQuoAisRow = (idx, field, val)=> setQuoAisRows(prev=> prev.map((r,i)=>{
     if(i!==idx) return r;
     const updated = {...r, [field]:val};
@@ -3234,6 +3237,9 @@ function MainApp({onDisconnect, binId}){
   const makeSectionRowHelpers = (setter, defaultRow)=>({
     add: ()=> setter(prev=>[...prev, {...defaultRow}]),
     remove: (idx)=> setter(prev=> prev.length>1 ? prev.filter((_,i)=>i!==idx) : prev),
+    // geser baris (seluruh isi baris ikut pindah: harga, diskon, stock, remark)
+    move: (idx, dir)=> setter(prev=>{ const j=idx+dir; if(j<0||j>=prev.length) return prev; const a=[...prev]; const t=a[idx]; a[idx]=a[j]; a[j]=t; return a; }),
+    moveTop: (idx)=> setter(prev=>{ if(idx<=0||idx>=prev.length) return prev; const a=[...prev]; const t=a.splice(idx,1)[0]; a.unshift(t); return a; }),
     setStockAll: (src)=> setter(prev=> prev.map(x=>({...x, stocks:cloneStocksNoQty(src), stockLoc:"", stockDetail:"", stockDays:""}))),
     update: (idx, field, val)=> setter(prev=> prev.map((r,i)=>{
       if(i!==idx) return r;
@@ -5745,7 +5751,12 @@ function MainApp({onDisconnect, binId}){
                       <input type="text" list="knownPartsCombinedDatalist" placeholder="No. Part, Nama Part (mis. 94211300, ROLLER MAIN)" value={r.desc} onChange={e=>updateQuoAisRow(idx,"desc",e.target.value)} onKeyDown={onEnter} />
                       <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>updateQuoAisRow(idx,"qty",e.target.value)} onKeyDown={onEnter} />
                       <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>updateQuoAisRow(idx,"unitPrice",e.target.value.replace(/\D/g,""))} onKeyDown={onEnter} />
-                      <span className="del" onClick={()=>removeQuoAisRow(idx)}>&times;</span>
+                      <span style={{display:"flex",gap:4,alignItems:"center"}}>
+                        <span title="Pindah ke paling atas" style={{...rowMoveBtn,opacity:idx===0?0.25:1}} onClick={()=>moveTopQuoAisRow(idx)}>&#8657;</span>
+                        <span title="Naikkan satu baris" style={{...rowMoveBtn,opacity:idx===0?0.25:1}} onClick={()=>moveQuoAisRow(idx,-1)}>&uarr;</span>
+                        <span title="Turunkan satu baris" style={{...rowMoveBtn,opacity:idx===quoAisRows.length-1?0.25:1}} onClick={()=>moveQuoAisRow(idx,1)}>&darr;</span>
+                        <span className="del" onClick={()=>removeQuoAisRow(idx)}>&times;</span>
+                      </span>
                     </div>
                     {kp && <div className="price-hint" style={{marginTop:-4,marginBottom:6}}>Harga jual sblmnya: {formatRupiah(kp.unitPrice)}</div>}
                     {isOemRow(r) && <div className="price-hint" style={{marginTop:-4,marginBottom:6,fontWeight:700}}>Part OEM (AGC 20) | tanda OEM di penawaran: {quoHideOem ? "tertutup" : "terbuka"}</div>}
@@ -5798,7 +5809,12 @@ function MainApp({onDisconnect, binId}){
                         <input type="number" min="0" placeholder="Qty" value={r.qty} onChange={e=>sec.h.update(idx,"qty",e.target.value)} onKeyDown={onEnter} />
                         <input type="text" inputMode="numeric" placeholder="Unit Price" value={formatNominalDisplay(r.unitPrice)} onChange={e=>sec.h.update(idx,"unitPrice",e.target.value.replace(/\D/g,""))} onKeyDown={onEnter} />
                         <input type="text" placeholder="Remark" value={r.remark} onChange={e=>sec.h.update(idx,"remark",e.target.value)} onKeyDown={onEnter} />
-                        <span className="del" onClick={()=>sec.h.remove(idx)}>&times;</span>
+                        <span style={{display:"flex",gap:4,alignItems:"center"}}>
+                          <span title="Pindah ke paling atas" style={{...rowMoveBtn,opacity:idx===0?0.25:1}} onClick={()=>sec.h.moveTop(idx)}>&#8657;</span>
+                          <span title="Naikkan satu baris" style={{...rowMoveBtn,opacity:idx===0?0.25:1}} onClick={()=>sec.h.move(idx,-1)}>&uarr;</span>
+                          <span title="Turunkan satu baris" style={{...rowMoveBtn,opacity:idx===sec.rows.length-1?0.25:1}} onClick={()=>sec.h.move(idx,1)}>&darr;</span>
+                          <span className="del" onClick={()=>sec.h.remove(idx)}>&times;</span>
+                        </span>
                       </div>
                       {kp && <div className="price-hint" style={{marginTop:-4,marginBottom:6}}>Harga jual sblmnya: {formatRupiah(kp.unitPrice)}</div>}
                       {sec.useDatalist && isOemRow(r) && <div className="price-hint" style={{marginTop:-4,marginBottom:6,fontWeight:700}}>Part OEM (AGC 20) | tanda OEM di penawaran: {quoHideOem ? "tertutup" : "terbuka"}</div>}
