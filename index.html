@@ -741,6 +741,9 @@ function extractDocNo(text){
 // yang tidak terdeteksi sebagai consumable tetap masuk SPARE PARTS. Agency lain (24 MIT, 89 Lonking, dst) selalu Spare Parts.
 const CONS_AGC_ALWAYS = ["87"];
 const CONS_AGC_MIXED = ["88"];
+// AGC 20 = part OEM. Tetap masuk SPARE PARTS (tidak termasuk consumable), diskon boleh diisi (optional), hanya diberi tanda OEM.
+const OEM_AGC = ["20"];
+const isOemRow = (r)=> OEM_AGC.indexOf(String((r && r.agc) || "").replace(/\D/g,""))>=0;
 const CONS_TYRE_RE = /\b(?:TYRES?|TIRES?|BAN|INNER\s*TUBE|FLAP)\b/i;
 const CONS_BATT_RE = /\b(?:ACCU|AKI|BATTERY|BATERAI)\b/i;
 const CONS_LIQ_RE = /\b(?:OLI|OIL|GREASE|GEMUK|LUBE|LUBRICANTS?|COOLANT|FLUID|ATF|SAE|VG\s*\d+)\b|\b\d+\s*(?:LTR|LT|LITER|L)\b|-\d+L(?:TR|T)?\b/i;
@@ -1647,7 +1650,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
               <div style={{marginTop:2}}>{it.quoNo?"penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{brSet.length===1?" | dari "+brSet[0]:""}</div>
             </div>
             ) : (
-              <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc:""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
+              <div className="pt-part">{(it.partNo?it.partNo+" ":"")+(it.desc||"")}{it.qty?" | qty "+it.qty:""}{it.agc?" | AGC "+it.agc+(OEM_AGC.indexOf(String(it.agc).replace(/\D/g,""))>=0?" (OEM)":""):""}{it.quoNo?" | penawaran "+it.quoNo:""}{it.ref?" | ref "+it.ref:""}{it.branch?" | dari "+it.branch:""}{it.type==="indent"&&it.origin?" ("+it.origin+")":""}{it.type==="indent"&&it.leadDays&&it.stage===0?" | est. "+it.leadDays+" hari sejak diproses":""}</div>
             )}
             {!done && (members.length>1 || !it.isNo) && (()=>{
               const selIds = members.length===1 ? [it.id] : members.filter(m=>qSel[m.id] && !ptIsDone(m)).map(m=>m.id);
@@ -2115,7 +2118,10 @@ function MainApp({onDisconnect, binId}){
   const [quoBaseDisc,setQuoBaseDisc] = useState(""); // diskon awal sesuai PDF AIS (untuk pembanding di draft email Mas Alif)
   const [quoPpnPct,setQuoPpnPct] = useState("11");
   const [quoAutoTrack,setQuoAutoTrack] = useState(true); // true = part indent / stock cabang otomatis masuk Tracking Part saat penawaran disimpan
-  const [quoHideInternal,setQuoHideInternal] = useState(true); // true = versi customer: diskon per part, baris DISC, dan lokasi stock disembunyikan di preview/PDF
+  // Tiga tombol tampilan terpisah (true = tertutup = disembunyikan di preview/PDF customer, info tetap ada di form untuk internal)
+  const [quoHideDisc,setQuoHideDisc] = useState(true);   // diskon per part + baris DISC (tertutup: Unit Price = harga net)
+  const [quoHideStock,setQuoHideStock] = useState(true); // lokasi stock + disclaimer stock
+  const [quoHideOem,setQuoHideOem] = useState(true);     // tanda OEM (AGC 20)
   const [quoPpnExclude,setQuoPpnExclude] = useState(false); // true = customer minta PPN tidak ditampilkan, ditulis "Exclude PPN"
   // AIS format: satu tabel line item
   const [quoAisRows,setQuoAisRows] = useState([{agc:"24", partNo:"", desc:"", qty:"", unitPrice:""}]);
@@ -3288,16 +3294,16 @@ function MainApp({onDisconnect, binId}){
     const ppn = totalValue*((Number(ppnPct)||0)/100);
     return {...calc, rows, totalValue, discPct:0, rowDiscSum:0, discAmt:0, ppn, total:totalValue+ppn};
   };
-  const quoAisView = useMemo(()=> quoHideInternal ? foldNet(quoAisCalc, quoDiscPct, quoAisCalc.ppnPct) : quoAisCalc, [quoHideInternal, quoAisCalc, quoDiscPct]);
+  const quoAisView = useMemo(()=> quoHideDisc ? foldNet(quoAisCalc, quoDiscPct, quoAisCalc.ppnPct) : quoAisCalc, [quoHideDisc, quoAisCalc, quoDiscPct]);
   const quoManualView = useMemo(()=>{
-    if(!quoHideInternal) return quoManualCalc;
+    if(!quoHideDisc) return quoManualCalc;
     const pp = quoPpnExclude ? 0 : (Number(quoPpnPct)||0);
     return {
       spareParts: foldNet(quoManualCalc.spareParts, quoManualDiscPct, pp),
       consumable: foldNet(quoManualCalc.consumable, 0, pp),
       service: foldNet(quoManualCalc.service, 0, pp)
     };
-  },[quoHideInternal, quoManualCalc, quoManualDiscPct, quoPpnPct, quoPpnExclude]);
+  },[quoHideDisc, quoManualCalc, quoManualDiscPct, quoPpnPct, quoPpnExclude]);
 
   // Scope kerja otomatis dari Spare Parts + Consumable
   const quoScopeAutoText = useMemo(()=>{
@@ -3639,7 +3645,7 @@ function MainApp({onDisconnect, binId}){
     format: quoFormat, branch: quoBranch, docNo: quoDocNo.trim(), docDate: quoDocDate,
     customerName: UC(quoCustomerName.trim()), address: quoAddress.trim(), phone: quoPhone.trim(),
     attn: quoAttn.trim(), model: quoModel.trim(), sn: quoSN.trim(), merk: quoMerk.trim(),
-    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), aisRev: quoAisRev || undefined, discPct: quoDiscPct, baseDiscPct: quoBaseDisc, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude, hideInternal: quoHideInternal,
+    custPoNo: quoCustPoNo.trim(), prNo: quoPrNo.trim(), aisRev: quoAisRev || undefined, discPct: quoDiscPct, baseDiscPct: quoBaseDisc, manualDiscPct: quoManualDiscPct, ppnPct: quoPpnPct, ppnExclude: quoPpnExclude, hideDisc: quoHideDisc, hideStock: quoHideStock, hideOem: quoHideOem,
     aisRows: quoAisRows, spareParts: quoSpareParts, consumable: quoConsumable, service: quoService,
     scopeOn: quoScopeOn, scopeAuto: quoScopeAuto, scopeText: quoScopeAuto?quoScopeAutoText:quoScopeText, scopeTitle: quoScopeTitle, termsAuto: quoTermsAuto, termsText: quoTermsAuto?quoTermsAutoText:quoTermsText,
     signerId: signers.activeId || null,
@@ -3721,7 +3727,7 @@ function MainApp({onDisconnect, binId}){
     setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||localISO());
     setQuoCustomerName(UC(q.customerName||"")); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
     setQuoAttn(q.attn||""); setQuoModel(q.model||""); setQuoSN(q.sn||""); setQuoMerk(q.merk||"");
-    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoAisRev(q.aisRev||null); setQuoDiscPct(q.discPct||"0"); setQuoBaseDisc(q.baseDiscPct||""); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude); setQuoHideInternal(q.hideInternal!==false);
+    setQuoCustPoNo(q.custPoNo||"BY VISIT"); setQuoPrNo(q.prNo||""); setQuoAisRev(q.aisRev||null); setQuoDiscPct(q.discPct||"0"); setQuoBaseDisc(q.baseDiscPct||""); setQuoManualDiscPct(q.manualDiscPct||"0"); setQuoPpnPct(q.ppnPct!=null?q.ppnPct:"11"); setQuoPpnExclude(!!q.ppnExclude); setQuoHideDisc((q.hideDisc!==undefined ? q.hideDisc : q.hideInternal)!==false); setQuoHideStock((q.hideStock!==undefined ? q.hideStock : q.hideInternal)!==false); setQuoHideOem(q.hideOem!==false);
     setQuoScopeOn(!!q.scopeOn); setQuoScopeAuto(q.scopeAuto!==false); setQuoScopeText(q.scopeText||""); setQuoScopeTitle(q.scopeTitle||"SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(q.termsAuto!==false); setQuoTermsText(q.termsText||"");
     setQuoAisRows(q.aisRows && q.aisRows.length ? q.aisRows : [{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts(q.spareParts && q.spareParts.length ? q.spareParts : [{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -3735,7 +3741,7 @@ function MainApp({onDisconnect, binId}){
     setQuoEditingId(null);
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
     setQuoAttn(""); setQuoMerk(""); setQuoModel(""); setQuoSN(""); setQuoCustPoNo("BY VISIT"); setQuoPrNo("");
-    setQuoAisRev(null); setQuoDiscPct("0"); setQuoBaseDisc(""); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false); setQuoHideInternal(true);
+    setQuoAisRev(null); setQuoDiscPct("0"); setQuoBaseDisc(""); setQuoManualDiscPct("0"); setQuoPpnPct(ppnDefault); setQuoPpnExclude(false); setQuoHideDisc(true); setQuoHideStock(true); setQuoHideOem(true);
     setQuoScopeAuto(true); setQuoScopeText(""); setQuoScopeTitle("SCOPE PEKERJAAN / SERVICE"); setQuoTermsAuto(true); setQuoTermsText("");
     setQuoAisRows([{agc:"24", desc:"", qty:"", unitPrice:""}]);
     setQuoSpareParts([{desc:"", qty:"", unitPrice:"", remark:""}]);
@@ -4009,7 +4015,7 @@ function MainApp({onDisconnect, binId}){
                   {rows.map((r,i)=>(
                     <tr key={i}>
                       <td style={td}>{i+1}</td>
-                      <td style={td}>{(r.agc || (!isAis && x.title==="Spare Parts")) ? <span className="meta" style={{fontWeight:700}}>AGC {r.agc||"24"} </span> : null}{r.desc}{r.supersede ? <div className="meta">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="meta" style={{fontWeight:700}}>{stockText(r)}</div> : null}{r.remark ? <div className="meta">{r.remark}</div> : null}</td>
+                      <td style={td}>{(r.agc || (!isAis && x.title==="Spare Parts")) ? <span className="meta" style={{fontWeight:700}}>AGC {r.agc||"24"} </span> : null}{isOemRow(r) ? <span className="meta" style={{fontWeight:700}}>[OEM] </span> : null}{r.desc}{r.supersede ? <div className="meta">{supLabel(r.supKind)} : {r.supersede}</div> : null}{stockText(r) ? <div className="meta" style={{fontWeight:700}}>{stockText(r)}</div> : null}{r.remark ? <div className="meta">{r.remark}</div> : null}</td>
                       <td style={num}>{r.qtyNum||""}</td>
                       <td style={num}>{Number(r.unitPrice)? fmt(Number(r.unitPrice)) : ""}</td>
                       <td style={num}>{r.dPct>0 ? r.dPct+"%" : "-"}</td>
@@ -4252,7 +4258,7 @@ function MainApp({onDisconnect, binId}){
     const supWa = supRows.length ? "Catatan pergantian No. Part:\n"+supLines+"\n\n" : "";
     const supEmail = supRows.length ? "Catatan: terdapat pergantian nomor part pada item berikut, mohon dicek pada dokumen terlampir:\n"+supLines+"\n\n" : "";
 
-    const stkRows = quoHideInternal ? [] : (quoFormat==="ais" ? quoAisCalc.rows : quoManualCalc.spareParts.rows).filter(r=>stockText(r));
+    const stkRows = quoHideStock ? [] : (quoFormat==="ais" ? quoAisCalc.rows : quoManualCalc.spareParts.rows).filter(r=>stockText(r));
     const stkLines = stkRows.map(r=>"- "+(r.desc||"").split(",")[0].trim()+": "+stockText(r)).join("\n");
     const stkWa = stkRows.length ? "Info ketersediaan barang:\n"+stkLines+"\n("+STOCK_DISCLAIMER+")\n\n" : "";
     const stkEmail = stkRows.length ? "Informasi ketersediaan barang:\n"+stkLines+"\n"+STOCK_DISCLAIMER+"\n\n" : "";
@@ -4413,7 +4419,7 @@ function MainApp({onDisconnect, binId}){
         {shownRows.map((r,idx)=>(
           <tr key={idx}>
             <td>{idx+1}</td>
-            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideInternal && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
+            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
             <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
             <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
             <td style={{textAlign:"right"}}>{r.ext?r.ext.toLocaleString("id-ID"):""}</td>
@@ -5552,9 +5558,11 @@ function MainApp({onDisconnect, binId}){
             <div className={"type-btn"+(quoFormat==="manual"&&quoScopeOn?" active-call":"")} onClick={()=>{ setQuoScopeOn(true); if(quoFormat!=="manual") switchQuoFormat("manual"); }}>Manual + Scope Kerja</div>
           </div>
           <div className="no-print" style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:18}}>
-            <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={()=>setQuoHideInternal(v=>!v)}>Tampilan penawaran: {quoHideInternal ? "Tertutup" : "Terbuka"}</button>
+            <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={()=>setQuoHideDisc(v=>!v)}>Diskon per part: {quoHideDisc ? "Tertutup" : "Terbuka"}</button>
+            <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={()=>setQuoHideStock(v=>!v)}>Lokasi stock: {quoHideStock ? "Tertutup" : "Terbuka"}</button>
+            <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={()=>setQuoHideOem(v=>!v)}>Tanda OEM: {quoHideOem ? "Tertutup" : "Terbuka"}</button>
             <label style={{fontSize:12,display:"flex",gap:5,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={quoAutoTrack} onChange={e=>setQuoAutoTrack(e.target.checked)} />Part indent / stock cabang otomatis masuk Tracking Part saat disimpan</label>
-            <span className="price-hint" style={{margin:0}}>{quoHideInternal ? "Preview dan PDF memakai harga net. Diskon per part, baris DISC, dan lokasi stock tidak tampil. Info diskon dan stock tetap ada di form ini." : "Preview dan PDF menampilkan diskon per part, baris DISC, dan lokasi stock."}</span>
+            <span className="price-hint" style={{margin:0}}>{"Diskon: "+(quoHideDisc ? "tertutup (Unit Price di preview/PDF = harga net, baris DISC tidak tampil)" : "terbuka (diskon per part dan baris DISC tampil)")+". Stock: "+(quoHideStock ? "tertutup" : "terbuka (lokasi stock tampil)")+". OEM: "+(quoHideOem ? "tertutup" : "terbuka (tulisan Part OEM tampil)")+". Info diskon, stock, dan OEM tetap terlihat di form ini."}</span>
           </div>
           <details className="no-print" style={{marginBottom:18}}>
             <summary style={{cursor:"pointer",fontFamily:"var(--sans)",fontWeight:700,fontSize:12.5}}>Pengaturan penawaran (PPN standar, cabang, masa berlaku, watermark)</summary>
@@ -5740,6 +5748,7 @@ function MainApp({onDisconnect, binId}){
                       <span className="del" onClick={()=>removeQuoAisRow(idx)}>&times;</span>
                     </div>
                     {kp && <div className="price-hint" style={{marginTop:-4,marginBottom:6}}>Harga jual sblmnya: {formatRupiah(kp.unitPrice)}</div>}
+                    {isOemRow(r) && <div className="price-hint" style={{marginTop:-4,marginBottom:6,fontWeight:700}}>Part OEM (AGC 20) | tanda OEM di penawaran: {quoHideOem ? "tertutup" : "terbuka"}</div>}
 <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
                       <span style={{fontSize:11.5,fontWeight:700}}>Diskon part ini</span>
                       <input type="number" min="0" max="100" step="any" placeholder="0" value={r.disc||""} onChange={e=>updateQuoAisRow(idx,"disc",e.target.value)} style={{width:72,fontSize:11.5,padding:"6px 9px"}} />
@@ -5792,6 +5801,7 @@ function MainApp({onDisconnect, binId}){
                         <span className="del" onClick={()=>sec.h.remove(idx)}>&times;</span>
                       </div>
                       {kp && <div className="price-hint" style={{marginTop:-4,marginBottom:6}}>Harga jual sblmnya: {formatRupiah(kp.unitPrice)}</div>}
+                      {sec.useDatalist && isOemRow(r) && <div className="price-hint" style={{marginTop:-4,marginBottom:6,fontWeight:700}}>Part OEM (AGC 20) | tanda OEM di penawaran: {quoHideOem ? "tertutup" : "terbuka"}</div>}
                       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
                         <span style={{fontSize:11.5,fontWeight:700}}>Diskon part ini</span>
                         <input type="number" min="0" max="100" step="any" placeholder="0" value={r.disc||""} onChange={e=>sec.h.update(idx,"disc",e.target.value)} style={{width:72,fontSize:11.5,padding:"6px 9px"}} />
@@ -6197,14 +6207,14 @@ function MainApp({onDisconnect, binId}){
               <div className="quo-ais-note">
                 NOTE : HARGA DAPAT BERUBAH SEWAKTU-WAKTU TANPA PEMBERITAHUAN<br/>
                 &nbsp;&nbsp;&nbsp;PRICE IS SUBJECT TO CHANGE WITHOUT NOTICED
-                {quoAnyStock && !quoHideInternal && <React.Fragment><br/>&nbsp;&nbsp;&nbsp;STOCK : KETERSEDIAAN STOCK DAPAT BERUBAH SEWAKTU-WAKTU</React.Fragment>}
+                {quoAnyStock && !quoHideStock && <React.Fragment><br/>&nbsp;&nbsp;&nbsp;STOCK : KETERSEDIAAN STOCK DAPAT BERUBAH SEWAKTU-WAKTU</React.Fragment>}
               </div>
               <table className="quo-ais-table">
                 <thead><tr><th>NO.</th><th>AGC</th><th>PART NUMBER / DESCRIPTION</th><th>QTY</th><th>UNIT PRICE</th><th>EXT.PRICE</th></tr></thead>
                 <tbody>
                   {quoAisView.rows.map((r,idx)=>(
                     <tr key={idx}>
-                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideInternal && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{r.dPct>0 ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
+                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{r.dPct>0 ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
                       <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
                       <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
                       <td style={{textAlign:"right"}}>{r.ext?("IDR "+r.ext.toLocaleString("id-ID")):""}</td>
@@ -6286,7 +6296,7 @@ function MainApp({onDisconnect, binId}){
               <div className="quo-manual-signblock">
                 {quoScopeOn && quoTermsLines.length>0 && <div style={{fontSize:11,margin:"6px 0 8px 14px",lineHeight:1.5}}>{quoTermsLines.map((l,i)=><div key={i}>{l}</div>)}</div>}
                 {quoSettings.validity && !(quoScopeOn && quoTermsLines.length>0) && <div className="quo-manual-note-italic">{quoSettings.validity}</div>}
-                {quoAnyStock && !quoHideInternal && <div className="quo-manual-note-italic">{STOCK_DISCLAIMER}</div>}
+                {quoAnyStock && !quoHideStock && <div className="quo-manual-note-italic">{STOCK_DISCLAIMER}</div>}
                 <div className="quo-manual-sign-row">
                   <div>PT. BERCA MANDIRI PERKASA</div>
                   <div>DI SETUJUI CUSTOMER</div>
