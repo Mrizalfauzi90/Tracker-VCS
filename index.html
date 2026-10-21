@@ -2937,9 +2937,9 @@ function MainApp({onDisconnect, binId}){
               + (quoEditingId ? " Klik Update Penawaran Tersimpan untuk menyimpan." : "");
           }
           if(quoFormat==="ais"){
-            setQuoAisRows(R.guessedParts.map(p=>({agc:"24", desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, supersede:p.supersede||"", ...carry(p)})));
+            setQuoAisRows(R.guessedParts.map(p=>({agc:(String(p.agc||"").replace(/\D/g,"")||"24"), desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, supersede:p.supersede||"", ...carry(p)})));
           } else {
-            const toRow = p=>({desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, remark:"", supersede:p.supersede||"", ...carry(p)});
+            const toRow = p=>({agc:(String(p.agc||"").replace(/\D/g,"")||"24"), desc: p.partNo+(p.desc?", "+p.desc:""), qty:p.qty, unitPrice:p.unitPrice, remark:"", supersede:p.supersede||"", ...carry(p)});
             const sp = splitQuoPartsBySection(R.guessedParts);
             setQuoSpareParts(sp.spare.length ? sp.spare.map(toRow) : [{desc:"", qty:"", unitPrice:"", remark:""}]);
             if(sp.cons.length) setQuoConsumable(sp.cons.map(toRow)); // kalau PDF tidak ada consumable, isi Consumable yang sudah ada dibiarkan
