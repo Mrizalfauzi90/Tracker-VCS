@@ -4322,7 +4322,7 @@ function MainApp({onDisconnect, binId}){
     const ovTxt = String(alifDiscOv).replace(",",".").trim();
     const ov = (ovTxt!=="" && !isNaN(Number(ovTxt))) ? Math.min(100,Math.max(0,Number(ovTxt))) : null;
     const discNew = ov!=null ? ov : globalDisc;
-    const rows = calcRows.filter(r=>String(r.desc||"").trim() && (Number(r.unitPrice)||0)>0).map(r=>{
+    const rows = calcRows.filter(r=>String(r.desc||"").trim()).map((r,i)=>({r, no:i+1})).filter(x=>(Number(x.r.unitPrice)||0)>0).map(({r,no})=>{
       const pn = String(r.desc).split(",")[0].trim();
       const key = pn.toUpperCase();
       const defElig = String(r.agc||"24")==="24";
@@ -4331,7 +4331,7 @@ function MainApp({onDisconnect, binId}){
       const effPct = !elig ? 0 : (ov!=null ? ov : (anyRowDisc ? r.dPct : globalDisc));
       const net = Math.round(list*(1-effPct/100));
       const rest = String(r.desc).split(",").slice(1).join(" ").trim();
-      return {pn, key, label: pn+(rest?" "+rest:""), elig, defElig, list, net, effPct, qty:Number(r.qty)||0};
+      return {no, agc:(String(r.agc||"24").replace(/\D/g,"")||"24"), pn, key, label: pn+(rest?" "+rest:""), elig, defElig, list, net, effPct, qty:Number(r.qty)||0};
     });
     const hasNonElig = rows.some(r=>!r.elig);
     const mode = alifModeSel==="auto" ? ((anyRowDisc || hasNonElig) ? "price" : "disc") : alifModeSel;
@@ -4342,10 +4342,9 @@ function MainApp({onDisconnect, binId}){
     const ppnAmt = afterDisc*ppnPct/100;
     const totalAkhir = afterDisc+ppnAmt;
 
-    const changed = rows.filter(r=>r.net!==r.list);
-    const same = rows.filter(r=>r.net===r.list);
-    const daftar = changed.map((r,i)=> (i+1)+". "+r.pn+" \u2192 "+(alifIncludeOld ? "dari "+numID(r.list)+" jadi "+numID(r.net) : numID(r.net))).join("\n");
-    const tetap = same.map(r=>"Part "+r.label+" biarkan tetap "+numID(r.list)+".").join("\n");
+    // Nomor mengikuti urutan sistem (AIS). Yang direvisi masuk daftar; yang tidak direvisi dipisah agar kelihatan
+    const daftar = rows.filter(r=>r.net!==r.list).map(r=> r.no+". "+r.pn+" | AGC "+r.agc+" \u2192 "+(alifIncludeOld ? "dari "+numID(r.list)+" jadi "+numID(r.net) : numID(r.net))).join("\n");
+    const tetap = rows.filter(r=>r.net===r.list).map(r=>"Part nomor "+r.no+" ("+r.label+", AGC "+r.agc+") biarkan tetap "+numID(r.list)+".").join("\n");
 
     const approver = String(alifApprover).trim();
     const baseNum = quoBaseDisc!=="" ? Number(quoBaseDisc) : null;
