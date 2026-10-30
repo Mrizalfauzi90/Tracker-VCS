@@ -1201,6 +1201,29 @@ function ptBuildFu(it, toCustomer, more){
   return lines.join("\n");
 }
 
+// Draft email FU Back Order ke tim Part BO. Sapaan generik (PIC BO bisa berganti), tanpa kalimat stock 0 karena part memang indent.
+function ptBuildBoEmail(it, more){
+  const all = [it].concat(more||[]); const multi = all.length>1;
+  const dFull = d => d ? (d.slice(8,10)+"/"+d.slice(5,7)+"/"+d.slice(0,4)) : "";
+  const quos = Array.from(new Set(all.map(x=>x.quoNo).filter(Boolean)));
+  const forTxt = it.customer ? ", untuk kebutuhan "+it.customer+(quos.length ? " ("+quos.join(", ")+")" : "") : "";
+  const lines = ["Subject: Follow Up Back Order Part – Cilegon", "", "Dear Bapak/Ibu,", "", "Mohon dibantu follow up status Back Order berikut yang sudah di-SI Emergency ke Cilegon"+forTxt+":", ""];
+  all.forEach((x,i)=>{
+    const pn = (x.partNo||"").trim(); const ds = (x.desc||"").trim();
+    const nm = pn && ds ? pn+" – "+ds : (pn||ds);
+    const qd = String(x.qty||"").replace(/\D/g,"");
+    let ref = x.ref ? String(x.ref).trim() : (x.isNo ? (/^SI\s/i.test(x.isNo) ? x.isNo : "SI EMERGENCY to "+x.isNo) : "");
+    if(ref && x.orderDate) ref += " ("+dFull(x.orderDate)+")";
+    const pre = multi ? (i+1)+". " : "- ";
+    const sub = multi ? "   - " : "- ";
+    lines.push(pre+"Part No: "+nm);
+    if(qd) lines.push(sub+"Qty BO: "+qd+" pcs");
+    if(ref) lines.push(sub+"Ref: "+ref);
+  });
+  lines.push("", "Mohon info estimasi barangnya bisa dikirim ke Cilegon.", "Terimakasih atas bantuannya.", "", "Best Regards,", "M. Rizal Fauzi");
+  return lines.join("\n");
+}
+
 // Baca teks PDF penawaran buatan Tracker: ambil No. Penawaran, customer, PR, tanggal, dan part yang punya info Indent / Stock cabang
 function ptParseQuotationPdfText(text){
   const lines = String(text||"").split("\n").map(l=>l.replace(/\s+/g," ").trim()).filter(Boolean);
@@ -1730,6 +1753,7 @@ function PartTracker({items, ready, loadErr, onChange, customers, quotations, qm
               {!done && <button type="button" className="icon-btn" onClick={()=>quickAdvance(it)}>{it.stage+1===T2.stages.length-1 ? "Sudah diserahkan" : "Maju: "+nextLabel}{batch.length>1?" ("+batch.length+" part)":""}</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>upId===it.id?setUpId(null):openUpdate(it)}>Update / Catat FU</button>}
               {!done && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(it,false,rest), it.id)}>{copiedId===it.id?"Tersalin":"Salin pesan FU"}</button>}
+              {!done && it.type==="bo" && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildBoEmail(it,rest), it.id+"e")}>{copiedId===it.id+"e"?"Tersalin":"Salin email FU ke Part BO"}</button>}
               {arrived && <button type="button" className="icon-btn" onClick={()=>copyText(ptBuildFu(arrivedMs[0],true,arrivedMs.slice(1)), it.id+"c")}>{copiedId===it.id+"c"?"Tersalin":"Salin info ke customer"}</button>}
               <button type="button" className="icon-btn" onClick={()=>setHistId(histId===it.id?null:it.id)}>Riwayat ({hist.length})</button>
               {!done && dupGroups(members).length>0 && <button type="button" className="icon-btn" onClick={()=>mergeDup(members)}>Rapikan part dobel</button>}
@@ -6420,7 +6444,7 @@ function MainApp({onDisconnect, binId}){
 
           <div className="faq-item">
             <h3>Bagaimana cara pakai menu Tracking Part?</h3>
-            <p>Pilih jenis part: Indent (lewat Jakarta dulu, ada No. IS), Stock Cabang (dikirim cabang lain, ada No. IS), atau BO / Emergency (punya nomor sendiri, bukan No. IS, jadi harus di-FU langsung). Isi customer dan part, lalu update statusnya tiap ada kabar lewat tombol Maju atau Update. Part yang sudah tiba tapi belum diserahkan, ETA-nya lewat, atau lama tanpa update akan muncul sebagai notifikasi di bagian atas aplikasi. Satu No. IS bisa berisi banyak part, jadi statusnya bisa diperbarui sekaligus. Tombol Salin pesan FU menyiapkan pesan WA untuk menanyakan posisi barang. Part indent atau stock cabang yang sudah tercantum di penawaran bisa diambil lewat panel Ambil dari Penawaran, dan No. Penawaran tersambung ke tracking. Begitu penawarannya berstatus Deal, muncul notifikasi untuk segera memproses indent. Untuk stock yang ada di cabang, pesan minta kirim ke Cilegon bisa disalin dan dikirim sebelum PO supaya lebih cepat.</p>
+            <p>Pilih jenis part: Indent (lewat Jakarta dulu, ada No. IS), Stock Cabang (dikirim cabang lain, ada No. IS), atau BO / Emergency (punya nomor sendiri, bukan No. IS, jadi harus di-FU langsung). Isi customer dan part, lalu update statusnya tiap ada kabar lewat tombol Maju atau Update. Part yang sudah tiba tapi belum diserahkan, ETA-nya lewat, atau lama tanpa update akan muncul sebagai notifikasi di bagian atas aplikasi. Satu No. IS bisa berisi banyak part, jadi statusnya bisa diperbarui sekaligus. Tombol Salin pesan FU menyiapkan pesan WA untuk menanyakan posisi barang. Khusus BO / Emergency ada juga tombol Salin email FU ke Part BO: sapaan generik Dear Bapak/Ibu (tanpa nama PIC), isinya Part No, Qty BO, dan Ref SI Emergency, lalu minta estimasi kirim ke Cilegon. Part indent atau stock cabang yang sudah tercantum di penawaran bisa diambil lewat panel Ambil dari Penawaran, dan No. Penawaran tersambung ke tracking. Begitu penawarannya berstatus Deal, muncul notifikasi untuk segera memproses indent. Untuk stock yang ada di cabang, pesan minta kirim ke Cilegon bisa disalin dan dikirim sebelum PO supaya lebih cepat.</p>
           </div>
 
           <div className="faq-item">
