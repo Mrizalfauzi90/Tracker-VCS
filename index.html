@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tracker VCS</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#15130F">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2222,6 +2226,13 @@ function MainApp({onDisconnect, binId}){
   const [quoTermsText,setQuoTermsText] = useState("");
   const [quotationsByKey,setQuotationsByKey] = useState({});
   const [quoEditingId,setQuoEditingId] = useState(null);
+  const [quoEditWarn,setQuoEditWarn] = useState(null); // {editing:"PQ...", isNew:bool} -> pop up peringatan saat klik penawaran lain padahal masih mengedit
+  // ---- Insentif (digembok kode): dihitung dari Tracking Part yang sudah "Sudah ke customer" ----
+  const [incSettings,setIncSettings] = useState({rate:0.7}); // rate dalam persen, tersimpan di key "incentive_settings"
+  const [incUnlocked,setIncUnlocked] = useState(false);
+  const [incPw,setIncPw] = useState(""); const [incPwErr,setIncPwErr] = useState(""); const [incFails,setIncFails] = useState(0);
+  const [incFilter,setIncFilter] = useState("tunggu"); // tunggu | cocok | tidak
+  useEffect(()=>{ if(mainView!=="insentif") setIncUnlocked(false); },[mainView]); // otomatis terkunci lagi kalau pindah tab
   const [quoDetailId,setQuoDetailId] = useState(null); // id penawaran yang detailnya dibuka di kotak Follow Up
   const [quoSearch,setQuoSearch] = useState("");
   const [quoStatusFilter,setQuoStatusFilter] = useState("all"); // all | open | fu | deal | lost | arsip
@@ -2463,6 +2474,7 @@ function MainApp({onDisconnect, binId}){
         setOdoByKey(prev=>({...prev,...oUpdate}));
         setQuotationsByKey(prev=>({...prev,...qUpdate}));
         setSalesTargetByYear(prev=>({...prev,[year]:salesTarget}));
+        try{ if(cloudData["incentive_settings"]) setIncSettings(prev=>({...prev,...JSON.parse(cloudData["incentive_settings"])})); }catch(e){}
       }catch(e){
         setErr("Gagal memuat data tahun "+year+" dari cloud. Detail: " + (e && e.message ? e.message : String(e)));
       }finally{
@@ -3812,7 +3824,7 @@ function MainApp({onDisconnect, binId}){
       });
     }
   };
-  const loadQuotationForEdit = (q)=>{
+  const loadQuotationForEdit = (q, toPreview)=>{
     setQuoEditingId(q.id);
     setQuoFormat(q.format); setQuoBranch(q.branch||"02-CILEGON"); setQuoDocNo(q.docNo||""); setQuoDocDate(q.docDate||localISO());
     setQuoCustomerName(UC(q.customerName||"")); setQuoAddress(q.address||""); setQuoPhone(q.phone||"");
@@ -3824,9 +3836,102 @@ function MainApp({onDisconnect, binId}){
     setQuoConsumable(q.consumable && q.consumable.length ? q.consumable : [{desc:"", qty:"", unitPrice:"", remark:""}]);
     setQuoService(q.service && q.service.length ? q.service : [{desc:"", qty:"", unitPrice:"", remark:""}]);
     if(q.signerId && signers.list.some(x=>x.id===q.signerId)) selectSigner(q.signerId);
-    setInfo("Memuat penawaran "+q.docNo+" untuk diedit.");
-    window.scrollTo({top:0, behavior:"smooth"});
+    if(toPreview){
+      setInfo("Menampilkan penawaran "+q.docNo+" di Preview. Form di atas ikut terisi data ini; kalau mau ubah lalu Simpan, penawaran ini yang tertimpa.");
+      setTimeout(()=>{ const el=document.getElementById("quoPreviewTop"); if(el && el.scrollIntoView) el.scrollIntoView({behavior:"smooth",block:"start"}); }, 150);
+    } else {
+      setInfo("Memuat penawaran "+q.docNo+" untuk diedit.");
+      window.scrollTo({top:0, behavior:"smooth"});
+    }
   };
+  // ===== Insentif: sumbernya Tracking Part yang sudah "Sudah ke customer" =====
+  // Tiap part punya: tgl diterima customer (bisa diubah), status konfirmasi (tunggu / cocok / tidak), catatan, dan nilai manual (opsional).
+  // Yang dihitung insentifnya hanya status "cocok", di kuartal sesuai tgl diterima customer.
+  const INC_HASH = "69ae94a8d9500f289c1fd2dc15e6a39c76721d41671c8e2e7d6e2be4b4ac91e0";
+  const INC_STATUS = {tunggu:"Menunggu konfirmasi", cocok:"Cocok (dihitung)", tidak:"Tidak cocok"};
+  const incTryUnlock = async()=>{
+    setIncPwErr("");
+    try{
+      if(!(window.crypto && window.crypto.subtle)){ setIncPwErr("Browser ini tidak mendukung pengecekan kode (butuh https)."); return; }
+      if(incFails>=3){ await new Promise(r=>setTimeout(r, 1500)); }
+      const buf = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode("vcs-incentive:"+incPw.trim()));
+      const hex = Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+      if(hex===INC_HASH){ setIncUnlocked(true); setIncPw(""); setIncFails(0); }
+      else { setIncFails(n=>n+1); setIncPwErr("Kode salah."); }
+    }catch(e){ setIncPwErr("Gagal mengecek kode."); }
+  };
+  const persistIncSettings = async(next)=>{
+    setIncSettings(next);
+    try{ await window.storage.set("incentive_settings", JSON.stringify(next)); }
+    catch(e){ setErr("Gagal menyimpan pengaturan insentif. Detail: "+(e && e.message ? e.message : String(e))); }
+  };
+  const incDelivered = ()=> partItems.filter(it=> it.stage===ptLastStage(it));
+  const incDateOf = (it)=>{
+    if(it.custDate) return it.custDate;
+    const h = (it.history||[]).filter(x=>x.stage===ptLastStage(it)).slice(-1)[0];
+    return (h && h.date) ? h.date : todayStr();
+  };
+  const incStatusOf = (it)=> it.incStatus==="cocok" || it.incStatus==="tidak" ? it.incStatus : "tunggu";
+  // harga satuan (sebelum PPN, setelah diskon) dari penawaran yang sama; null kalau tidak ketemu
+  const incPriceOf = (it)=>{
+    try{
+      if(!it.quoNo || !it.partNo) return null;
+      const base = ptBaseNo(it.quoNo); const exact = String(it.quoNo).trim();
+      const cands = ptQuoList.filter(q=>ptBaseNo(q.docNo)===base)
+        .sort((a,b)=> ((String(b.docNo).trim()===exact)-(String(a.docNo).trim()===exact)) || String(b.savedAt||"").localeCompare(String(a.savedAt||"")));
+      for(const q of cands){
+        const ppnP = q.ppnExclude ? "0" : (q.ppnPct!=null ? q.ppnPct : "11");
+        const rows = q.format==="ais" ? calcSection(q.aisRows||[], true, q.discPct, ppnP).rows : calcSection(q.spareParts||[], true, q.manualDiscPct, ppnP).rows;
+        const hit = rows.find(r=> String(r.desc||"").split(",")[0].trim().toUpperCase()===String(it.partNo).toUpperCase());
+        if(hit && hit.priceNum>0) return hit.priceNum;
+      }
+    }catch(e){}
+    return null;
+  };
+  // nilai part (Rp, sebelum PPN): manual kalau diisi, kalau tidak harga satuan penawaran x qty
+  const incValueOf = (it)=>{
+    const man = Number(it.incValue)||0;
+    if(man>0) return {val:man, manual:true};
+    const price = incPriceOf(it); const qn = Number(String(it.qty||"").replace(/\D/g,""))||0;
+    if(price && qn>0 && it.type!=="konsumabel") return {val:Math.round(price*qn), manual:false};
+    return {val:0, manual:false, missing:true};
+  };
+  const incCalc = (val)=> (Number(val)||0) * (Number(incSettings.rate)||0) / 100;
+  const incPatch = (ids, patch)=> persistParts(partItems.map(x=> ids.indexOf(x.id)>=0 ? {...x, ...patch} : x));
+  // Apakah form sedang berisi perubahan yang belum disimpan (atau penawaran baru yang sudah diisi)?
+  const quoFormIsDirty = ()=>{
+    try{
+      const nz = (x)=> String(x==null ? "" : x).trim();
+      const sig = (rows)=> (rows||[]).filter(r=>nz(r.desc)||nz(r.qty)||nz(r.unitPrice)).map(r=>[nz(r.agc),nz(r.desc),nz(r.qty),nz(r.unitPrice),nz(r.remark)].join("\u00a6")).join("|");
+      const saved = quoEditingId ? findQuotationById(quoEditingId) : null;
+      if(!saved){
+        // penawaran baru: dianggap sedang diisi kalau ada customer atau baris part yang terisi
+        return !!(nz(quoCustomerName) || sig(quoAisRows) || sig(quoSpareParts) || sig(quoConsumable) || sig(quoService));
+      }
+      const pairs = [
+        [saved.format, quoFormat], [nz(saved.docNo), nz(quoDocNo)], [nz(saved.docDate), nz(quoDocDate)],
+        [nz(UC(saved.customerName||"")), nz(quoCustomerName)], [nz(saved.address), nz(quoAddress)], [nz(saved.phone), nz(quoPhone)],
+        [nz(saved.attn), nz(quoAttn)], [nz(saved.model), nz(quoModel)], [nz(saved.sn), nz(quoSN)], [nz(saved.merk), nz(quoMerk)],
+        [nz(saved.custPoNo||"BY VISIT"), nz(quoCustPoNo)], [nz(saved.prNo), nz(quoPrNo)],
+        [nz(saved.discPct||"0"), nz(quoDiscPct)], [nz(saved.manualDiscPct||"0"), nz(quoManualDiscPct)],
+        [nz(saved.ppnPct!=null ? saved.ppnPct : "11"), nz(quoPpnPct)], [!!saved.ppnExclude, !!quoPpnExclude],
+        [sig(saved.aisRows), sig(quoAisRows)], [sig(saved.spareParts), sig(quoSpareParts)],
+        [sig(saved.consumable), sig(quoConsumable)], [sig(saved.service), sig(quoService)]
+      ];
+      return pairs.some(([x,y])=>x!==y);
+    }catch(e){ return true; }
+  };
+  // Klik baris penawaran di daftar -> tampilkan di Preview. Kalau form masih berisi editan yang belum disimpan, munculkan peringatan dulu.
+  const openQuoInPreview = (q)=>{
+    const scrollPreview = ()=>{ const el=document.getElementById("quoPreviewTop"); if(el && el.scrollIntoView) el.scrollIntoView({behavior:"smooth",block:"start"}); };
+    if(quoEditingId && quoEditingId===q.id){ scrollPreview(); return; } // yang diklik sudah yang sedang dibuka di form
+    if(quoFormIsDirty()){
+      setQuoEditWarn({editing: nz0(quoDocNo) || "(belum ada No. Dokumen)", isNew: !quoEditingId});
+      return;
+    }
+    loadQuotationForEdit(q, true);
+  };
+  const nz0 = (x)=> String(x==null ? "" : x).trim();
   const newQuotation = ()=>{
     setQuoEditingId(null);
     setQuoDocNo(""); setQuoCustomerId(""); setQuoCustomerName(""); setQuoAddress(""); setQuoPhone("");
@@ -4910,6 +5015,7 @@ function MainApp({onDisconnect, binId}){
         <div className={"maintab-btn"+(mainView==="report"?" on":"")} onClick={()=>setMainView("report")}>📊 Laporan Tahunan {year}</div>
         <div className={"maintab-btn"+(mainView==="quotation"?" on":"")} onClick={()=>setMainView("quotation")}>🧾 Buat Penawaran{fuList.length>0 ? " ("+fuList.length+" FU)" : ""}</div>
         <div className={"maintab-btn"+(mainView==="parts"?" on":"")} onClick={()=>setMainView("parts")}>📦 Tracking Part{ptSum.aksi>0 ? " ("+ptSum.aksi+")" : ""}</div>
+        <div className={"maintab-btn"+(mainView==="insentif"?" on":"")} onClick={()=>setMainView("insentif")}>💰 Insentif</div>
         <div className={"maintab-btn"+(mainView==="faq"?" on":"")} onClick={()=>setMainView("faq")}>❓ Panduan</div>
         <div className={"maintab-btn"+(mainView==="settings"?" on":"")} onClick={()=>setMainView("settings")}>⚙️ Pengaturan</div>
       </div>
@@ -6246,7 +6352,7 @@ function MainApp({onDisconnect, binId}){
                   return (
                   <div className="entry" key={q.id} style={{flexWrap:"wrap"}}>
                     <span className={"tag "+(q.format==="ais"?"visit":"call")}>{q.format==="ais"?"AIS":"Manual"}</span>
-                    <span className="name" style={{minWidth:180}}>
+                    <span className="name" style={{minWidth:180,cursor:"pointer"}} title="Klik untuk lihat penawaran ini di Preview" onClick={()=>openQuoInPreview(q)}>
                       {q.docNo || "(tanpa No. Dokumen)"}
                       {q.trackerNo && <span className="meta"> (No. tracker: {q.trackerNo})</span>}
                       <span className="meta"> — {UC(q.customerName)||"-"}</span>
@@ -6270,13 +6376,36 @@ function MainApp({onDisconnect, binId}){
                 })}
               </div>
             )}
+            {quoEditWarn && (
+              <div className="no-print" onClick={()=>setQuoEditWarn(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:99999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+                <style>{"@keyframes vcsWiggle{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}} @keyframes vcsPop{0%{transform:scale(.7);opacity:0}100%{transform:scale(1);opacity:1}}"}</style>
+                <div onClick={e=>e.stopPropagation()} style={{background:"#fff",border:"4px solid var(--ink)",boxShadow:"8px 8px 0 var(--ink)",maxWidth:460,width:"100%",padding:"22px 22px 20px",textAlign:"center",fontFamily:"var(--sans)",animation:"vcsPop .22s ease-out"}}>
+                  <svg viewBox="0 0 200 180" width="150" height="135" style={{animation:"vcsWiggle .7s ease-in-out infinite",transformOrigin:"50% 90%"}} aria-hidden="true">
+                    <path d="M100 14 L186 160 Q192 168 182 168 L18 168 Q8 168 14 160 Z" fill="#FFD23F" stroke="#1a1a1a" strokeWidth="8" strokeLinejoin="round"/>
+                    <circle cx="78" cy="104" r="15" fill="#fff" stroke="#1a1a1a" strokeWidth="4"/>
+                    <circle cx="122" cy="104" r="15" fill="#fff" stroke="#1a1a1a" strokeWidth="4"/>
+                    <circle cx="81" cy="107" r="6" fill="#1a1a1a"/>
+                    <circle cx="119" cy="107" r="6" fill="#1a1a1a"/>
+                    <path d="M60 80 L91 90 M140 80 L109 90" stroke="#1a1a1a" strokeWidth="5" strokeLinecap="round"/>
+                    <path d="M82 144 Q100 128 118 144" stroke="#1a1a1a" strokeWidth="5" fill="none" strokeLinecap="round"/>
+                    <path d="M160 56 Q172 74 160 82 Q148 74 160 56 Z" fill="#6EC6FF" stroke="#1a1a1a" strokeWidth="3"/>
+                  </svg>
+                  <div style={{fontWeight:900,fontSize:24,margin:"6px 0 8px",letterSpacing:.3}}>Eits, tunggu dulu! ✋</div>
+                  <div style={{fontSize:16,lineHeight:1.5,marginBottom:6}}>
+                    {quoEditWarn.isNew ? "Kamu sedang mengisi penawaran baru yang belum disimpan" : <>Kamu sedang mengedit penawaran <b>{quoEditWarn.editing}</b></>}
+                  </div>
+                  <div style={{fontSize:15,lineHeight:1.5,marginBottom:16}}>Mohon <b>selesaikan atau simpan lebih dahulu</b>, supaya editanmu tidak hilang. 🙏</div>
+                  <button className="icon-btn" style={{fontSize:15,padding:"10px 22px",fontWeight:800}} onClick={()=>{ setQuoEditWarn(null); window.scrollTo({top:0,behavior:"smooth"}); }}>Oke, lanjut edit dulu</button>
+                </div>
+              </div>
+            )}
           </Panel>
 
           <Panel id="signer" className="no-print" style={{marginBottom:16}} title="Penanda Tangan" hint={"aktif: "+signerName+" (klik untuk buka/tutup)"}>
             {renderSignerCard(true)}
           </Panel>
 
-          <h2 className="section no-print">Preview</h2>
+          <h2 className="section no-print" id="quoPreviewTop">Preview</h2>
 
           {quoFormat==="ais" ? (
             <div className="quo-preview-scroll">
@@ -6415,6 +6544,131 @@ function MainApp({onDisconnect, binId}){
             </div>
             </div>
           )}
+        </React.Fragment>
+      )}
+
+      {mainView==="insentif" && (
+        <React.Fragment>
+          <h2 className="section" style={{marginTop:0}}>💰 Insentif {year}</h2>
+          {!incUnlocked ? (
+            <div className="no-print" style={{background:"#fff",border:"2.5px solid var(--ink)",padding:"22px 18px",textAlign:"center",fontFamily:"var(--sans)",maxWidth:420,margin:"0 auto"}}>
+              <div style={{fontSize:42,lineHeight:1}}>🔒</div>
+              <div style={{fontWeight:800,fontSize:15,margin:"8px 0 12px"}}>Tabel insentif dikunci</div>
+              <input type="password" inputMode="numeric" autoComplete="off" value={incPw} placeholder="Masukkan kode"
+                onChange={e=>setIncPw(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter") incTryUnlock(); }} style={{textAlign:"center",maxWidth:220}} />
+              <div style={{marginTop:10}}><button className="icon-btn" style={{fontWeight:700}} onClick={incTryUnlock}>Buka</button></div>
+              {incPwErr && <div style={{color:"var(--red)",fontWeight:700,fontSize:13,marginTop:8}}>{incPwErr}</div>}
+            </div>
+          ) : (() => {
+            const all = incDelivered();
+            const cnt = {tunggu:0, cocok:0, tidak:0}; all.forEach(it=>{ cnt[incStatusOf(it)]++; });
+            const shown = all.filter(it=>incStatusOf(it)===incFilter).sort((a,b)=>incDateOf(b).localeCompare(incDateOf(a)));
+            // kelompokkan per customer + penawaran supaya mudah ditandai sekaligus
+            const groups = {}; shown.forEach(it=>{ const k=(it.customer||"-")+"|"+(it.quoNo||"-"); (groups[k]=groups[k]||[]).push(it); });
+            const th = {padding:"5px 8px",fontSize:11,textAlign:"left",background:"var(--paper-raise)",borderBottom:"1.5px solid var(--ink)"};
+            const td = {padding:"5px 8px",fontSize:12.5,borderTop:"1px solid var(--line)",verticalAlign:"top"};
+            const tr = {...td,textAlign:"right",whiteSpace:"nowrap"};
+            const yearTotals = {val:0, inc:0};
+            const perQ = quarters.map(q=>{
+              const rows = all.filter(it=>incStatusOf(it)==="cocok" && quarterKeyForDate(incDateOf(it)).key===(year+"_"+q.id)).sort((a,b)=>incDateOf(b).localeCompare(incDateOf(a)));
+              const val = rows.reduce((a,it)=>a+incValueOf(it).val,0);
+              const miss = rows.filter(it=>incValueOf(it).missing).length;
+              yearTotals.val += val; yearTotals.inc += incCalc(val);
+              return {q, rows, val, miss};
+            });
+            return (
+            <React.Fragment>
+              <div className="no-print" style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"center",marginBottom:12,fontFamily:"var(--sans)",fontSize:13}}>
+                <label style={{display:"flex",alignItems:"center",gap:6,margin:0}}>Tarif insentif
+                  <input type="number" step="0.01" min="0" value={incSettings.rate} style={{width:80}}
+                    onChange={e=>persistIncSettings({...incSettings, rate:e.target.value===""?0:Number(e.target.value)})} /> %</label>
+                <span className="meta">dihitung dari nilai part sebelum PPN (harga satuan penawaran x qty)</span>
+                <span className="icon-btn" style={{fontSize:11,padding:"3px 10px"}} onClick={()=>setIncUnlocked(false)}>🔒 Kunci sekarang</span>
+              </div>
+
+              {perQ.map(({q,rows,val,miss})=>(
+                <div key={q.id} style={{background:"#fff",border:"2px solid var(--ink)",marginBottom:14,fontFamily:"var(--sans)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,padding:"8px 12px",background:"var(--ink)",color:"#fff"}}>
+                    <b>{q.label} <span style={{fontWeight:400,opacity:.8}}>({q.range})</span></b>
+                    <span>Nilai {formatRupiah(val)} &nbsp;•&nbsp; <b style={{color:"var(--yellow)"}}>Insentif {formatRupiah(incCalc(val))}</b></span>
+                  </div>
+                  {rows.length===0 ? <div style={{padding:"10px 12px",fontSize:12.5,color:"var(--muted)"}}>Belum ada part berstatus Cocok di kuartal ini.</div> : (
+                    <div style={{overflowX:"auto"}}>
+                      {miss>0 && <div style={{padding:"6px 12px",fontSize:12,color:"var(--red)",fontWeight:700}}>{miss} part belum ada nilainya (harga tidak ketemu di penawaran). Isi nilainya manual di daftar Cocok di bawah.</div>}
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead><tr><th style={th}>Tgl terima</th><th style={th}>Customer / Part</th><th style={{...th,textAlign:"right"}}>Nilai</th><th style={{...th,textAlign:"right"}}>Insentif</th></tr></thead>
+                        <tbody>
+                          {rows.map(it=>{ const v=incValueOf(it); return (
+                            <tr key={it.id}>
+                              <td style={td}>{new Date(incDateOf(it)+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'short'})}</td>
+                              <td style={td}>{UC(it.customer)||"-"}<div className="meta">{it.partNo||it.desc}{it.qty ? " x"+it.qty : ""}{it.quoNo ? " • "+it.quoNo : ""}</div></td>
+                              <td style={tr}>{v.missing ? "—" : numID(v.val)}{v.manual && <span className="meta"> (manual)</span>}</td>
+                              <td style={{...tr,fontWeight:700}}>{v.missing ? "—" : numID(incCalc(v.val))}</td>
+                            </tr>
+                          ); })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{background:"var(--yellow)",border:"2.5px solid var(--ink)",padding:"10px 14px",marginBottom:20,fontFamily:"var(--sans)",fontWeight:800,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+                <span>Total {year}</span><span>Nilai {formatRupiah(yearTotals.val)} &nbsp;•&nbsp; Insentif {formatRupiah(yearTotals.inc)}</span>
+              </div>
+
+              <div className="no-print" style={{fontFamily:"var(--sans)"}}>
+                <div style={{fontWeight:800,fontSize:13,marginBottom:6}}>Part yang sudah ke customer (dari Tracking Part)</div>
+                <div className="tabs" style={{flexWrap:"wrap",width:"auto"}}>
+                  {[["tunggu","Menunggu konfirmasi"],["cocok","Cocok"],["tidak","Tidak cocok"]].map(([k,l])=>(
+                    <div key={k} className={"tab-btn"+(incFilter===k?" on":"")} onClick={()=>setIncFilter(k)}>{l} ({cnt[k]})</div>
+                  ))}
+                </div>
+                <div className="extract-note" style={{fontStyle:"normal"}}>Part masuk ke sini otomatis begitu di Tracking Part sudah ditandai "Sudah ke customer". Awalnya semua berstatus Menunggu konfirmasi (mis. PSO belum ditandatangani user / belum bisa diserahkan ke finance). Ubah ke Cocok kalau sudah beres, atau Tidak cocok kalau part ditolak. Tanggal terima bisa diubah per part atau sekaligus per kelompok.</div>
+                {shown.length===0 && <div className="empty">Tidak ada part di kategori ini.</div>}
+                {Object.keys(groups).map(k=>{
+                  const g = groups[k]; const ids = g.map(x=>x.id);
+                  return (
+                    <div key={k} style={{background:"#fff",border:"2px solid var(--ink)",marginBottom:12}}>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--paper-raise)",borderBottom:"1.5px solid var(--ink)"}}>
+                        <b style={{fontSize:13}}>{UC(g[0].customer)||"-"}<span className="meta" style={{fontWeight:400}}> — {g[0].quoNo||"tanpa No. penawaran"} — {g.length} part</span></b>
+                        <span style={{display:"inline-flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                          <span className="meta">tgl terima semua:</span>
+                          <input type="date" style={{width:150,padding:"2px 6px",fontSize:12}} value="" onChange={e=>{ if(e.target.value) incPatch(ids,{custDate:e.target.value}); }} />
+                          {incFilter!=="cocok" && <span className="icon-btn" style={{fontSize:11,padding:"3px 8px",background:"var(--green)",color:"#fff",borderColor:"var(--green)"}} onClick={()=>incPatch(ids,{incStatus:"cocok"})}>Cocok semua</span>}
+                          {incFilter!=="tunggu" && <span className="icon-btn" style={{fontSize:11,padding:"3px 8px"}} onClick={()=>incPatch(ids,{incStatus:"tunggu"})}>Menunggu</span>}
+                          {incFilter!=="tidak" && <span className="icon-btn" style={{fontSize:11,padding:"3px 8px",background:"var(--red)",color:"#fff",borderColor:"var(--red)"}} onClick={()=>incPatch(ids,{incStatus:"tidak"})}>Tidak cocok semua</span>}
+                        </span>
+                      </div>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr><th style={th}>Part</th><th style={th}>Tgl terima</th><th style={th}>Status</th><th style={{...th,textAlign:"right"}}>Nilai (sebelum PPN)</th><th style={th}>Catatan</th></tr></thead>
+                          <tbody>
+                            {g.map(it=>{ const v=incValueOf(it); return (
+                              <tr key={it.id}>
+                                <td style={td}>{it.partNo||"-"}<div className="meta">{it.desc}{it.qty ? " • qty "+it.qty : ""}</div></td>
+                                <td style={td}><input type="date" style={{width:140,padding:"2px 6px",fontSize:12}} value={incDateOf(it)} onChange={e=>{ if(e.target.value) incPatch([it.id],{custDate:e.target.value}); }} /></td>
+                                <td style={td}>
+                                  <select style={{fontSize:12,padding:"2px 4px"}} value={incStatusOf(it)} onChange={e=>incPatch([it.id],{incStatus:e.target.value})}>
+                                    {Object.keys(INC_STATUS).map(sk=><option key={sk} value={sk}>{INC_STATUS[sk]}</option>)}
+                                  </select>
+                                </td>
+                                <td style={tr}>
+                                  {v.missing ? <input type="number" placeholder="isi manual" style={{width:120,padding:"2px 6px",fontSize:12}} onBlur={e=>{ const n=Number(e.target.value); if(n>0) incPatch([it.id],{incValue:Math.round(n)}); }} />
+                                   : <span>{numID(v.val)}{v.manual && <span className="meta"> (manual)</span>}</span>}
+                                </td>
+                                <td style={td}><input type="text" style={{width:"100%",minWidth:140,padding:"2px 6px",fontSize:12}} defaultValue={it.incNote||""} placeholder="mis. PSO belum di-TTD user" onBlur={e=>{ if((e.target.value||"")!==(it.incNote||"")) incPatch([it.id],{incNote:e.target.value}); }} /></td>
+                              </tr>
+                            ); })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </React.Fragment>
+            );
+          })()}
         </React.Fragment>
       )}
 
