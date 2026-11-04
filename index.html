@@ -1066,6 +1066,21 @@ function ptExtractFromQuotation(q){
     if(oilL>0 && out.length>before) oilTotal += oilL; // oli ikut dicatat hanya kalau part-nya memang dilacak
   });
   if(oilTotal>0) out.push({type:"konsumabel", agc:"", partNo:"", desc:"HYDRA FLUID", qty:fmtL(oilTotal)+" L", leadDays:"", origin:"", branch:""});
+  // Baris Consumable/Commodity (oli, brake fluid, dst) ikut masuk Tracking Part sebagai Konsumabel.
+  // Manual: seluruh baris di section CONSUMABLE. AIS: baris yang terdeteksi consumable (AGC 87 / 88 oli-ban-aki).
+  const consRows = q && q.format==="ais"
+    ? rows.filter(r=>r && classifyQuoPart(r)==="consumable")
+    : ((q && q.consumable) || []);
+  consRows.forEach(r=>{
+    const d = String((r && r.desc)||"").trim();
+    if(!d) return;
+    const dU = d.toUpperCase();
+    if(/HYDRA/.test(dU) && out.some(x=>x.type==="konsumabel" && /HYDRA/.test(String(x.desc||"").toUpperCase()))) return;
+    if(out.some(x=>x.type==="konsumabel" && String(x.desc||"").toUpperCase()===dU)) return;
+    if(q.format==="ais" && out.some(x=>x.type!=="konsumabel" && d.toUpperCase().indexOf(String(x.partNo||"@@").toUpperCase())===0)) return; // sudah dilacak sebagai indent / stock cabang
+    const qtyN = String((r && r.qty)||"").trim();
+    out.push({type:"konsumabel", agc:"", partNo:"", desc:d, qty:qtyN, leadDays:"", origin:"", branch:""});
+  });
   return out;
 }
 function ptBaseNo(n){ return String(n||"").trim().toUpperCase().replace(/\s*REV(ISI)?\s*\d*$/,""); }
