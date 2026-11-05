@@ -647,6 +647,7 @@ const AUTO_LOST_MONTHS = 3;    // penawaran Open tanpa kabar lewat 3 bulan otoma
 const BERCA_BRANCHES_TOP = ["Cilegon","Jakarta","Cikarang"];
 const BERCA_BRANCHES = ["Asem Reges","Balikpapan","Bandung","Banjarmasin","Batam","Batu Kajang","Benete","Bengalon","Bengkulu","Berau","Bitung","Cilacap","Denpasar","Jambi","Jatake","Kariangau","Kendari","Ketapang","Kupang","Lampung","Makassar","Manado","Medan","Melak","Morowali","Muara Enim","Padang","Palangkaraya","Palembang","Palu","Pangkal Pinang","Pekanbaru","Pontianak","Samarinda","Sampit","Sangatta","Satui","Semarang","Sorong","Surabaya","Tanjung Pinang","Tanjung Tabalong","Tarakan","Tembagapura","Waingapu"];
 const INDENT_ORIGINS = ["China","Singapura","Jepang"];
+const DEFAULT_BANK_TEXT = "NOMOR REKENING BCA : 2415004000 a.n. PT. BERCA MANDIRI PERKASA";
 const STOCK_DISCLAIMER = "Ketersediaan stock dapat berubah sewaktu-waktu.";
 // Stock per baris = daftar lokasi: [{loc, detail, qty, days}]. loc = nama cabang | "INDENT" | "LAIN".
 // Kompatibel dengan format lama (satu lokasi: stockLoc/stockDetail/stockDays).
@@ -3015,6 +3016,8 @@ function MainApp({onDisconnect, binId}){
             if(old.stocks) out.stocks = old.stocks;
             if(old.stockLoc){ out.stockLoc = old.stockLoc; out.stockDetail = old.stockDetail||""; out.stockDays = old.stockDays||""; }
             if(old.remark) out.remark = old.remark;
+            if(old.hideStock) out.hideStock = true;
+            if(old.hideDisc) out.hideDisc = true;
             if(!p.supersede && old.supersede){ out.supersede = old.supersede; out.supKind = old.supKind||""; }
             else if(p.supersede && old.supersede && String(old.supersede).toUpperCase()===String(p.supersede).toUpperCase()){ out.supKind = old.supKind||""; }
             return out;
@@ -3499,7 +3502,7 @@ function MainApp({onDisconnect, binId}){
   const [quoSettings,setQuoSettings] = useState(QS_DEFAULT);
   const [qsDraft,setQsDraft] = useState(QS_DEFAULT);
   const ppnDefault = quoSettings.ppn;
-  const quoBankShown = (quoBankText||"").trim() || (quoSettings.bank||"").trim();
+  const quoBankShown = (quoBankText||"").trim() || (quoSettings.bank||"").trim() || DEFAULT_BANK_TEXT;
   useEffect(()=>{
     (async()=>{
       try{
@@ -4399,7 +4402,7 @@ function MainApp({onDisconnect, binId}){
     if(h<18) return "sore";
     return "malam";
   };
-  const quoAnyStock = (quoFormat==="ais" ? quoAisCalc.rows : quoManualCalc.spareParts.rows).some(r=>stockText(r));
+  const quoAnyStock = (quoFormat==="ais" ? quoAisCalc.rows : quoManualCalc.spareParts.rows).some(r=>!r.hideStock && stockText(r));
   const setAisStockAll = (src)=> setQuoAisRows(prev=> prev.map(x=>({...x, stocks:cloneStocksNoQty(src), stockLoc:"", stockDetail:"", stockDays:""})));
   const renderStockInputs = (r, onChange, onApplyAll)=>{
     const list = getStocks(r);
@@ -4468,7 +4471,7 @@ function MainApp({onDisconnect, binId}){
     const supWa = supRows.length ? "Catatan pergantian No. Part:\n"+supLines+"\n\n" : "";
     const supEmail = supRows.length ? "Catatan: terdapat pergantian nomor part pada item berikut, mohon dicek pada dokumen terlampir:\n"+supLines+"\n\n" : "";
 
-    const stkRows = quoHideStock ? [] : (quoFormat==="ais" ? quoAisCalc.rows : quoManualCalc.spareParts.rows).filter(r=>stockText(r));
+    const stkRows = quoHideStock ? [] : (quoFormat==="ais" ? quoAisCalc.rows : quoManualCalc.spareParts.rows).filter(r=>!r.hideStock && stockText(r));
     const stkLines = stkRows.map(r=>"- "+(r.desc||"").split(",")[0].trim()+": "+stockText(r)).join("\n");
     const stkWa = stkRows.length ? "Info ketersediaan barang:\n"+stkLines+"\n("+STOCK_DISCLAIMER+")\n\n" : "";
     const stkEmail = stkRows.length ? "Informasi ketersediaan barang:\n"+stkLines+"\n"+STOCK_DISCLAIMER+"\n\n" : "";
@@ -4628,11 +4631,11 @@ function MainApp({onDisconnect, binId}){
         {shownRows.map((r,idx)=>(
           <tr key={idx}>
             <td>{idx+1}</td>
-            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
+            <td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && !r.hideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}</td>
             <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
             <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
             <td style={{textAlign:"right"}}>{r.ext?r.ext.toLocaleString("id-ID"):""}</td>
-            <td>{r.remark}{r.dPct>0 ? <div style={{fontWeight:700}}>Diskon {r.dPct}%</div> : null}</td>
+            <td>{r.remark}{(r.dPct>0 && !r.hideDisc) ? <div style={{fontWeight:700}}>Diskon {r.dPct}%</div> : null}</td>
           </tr>
         ))}
         <tr className="quo-manual-total-row"><td colSpan={3}></td><td className="quo-manual-total-lbl">TOTAL VALUE</td><td className="quo-manual-total-val">{calc.totalValue.toLocaleString("id-ID")}</td><td></td></tr>
@@ -4831,7 +4834,7 @@ function MainApp({onDisconnect, binId}){
           <input type="text" value={qsDraft.validity} onChange={e=>setQsDraft(d=>({...d, validity:e.target.value}))} placeholder="kosongkan untuk menyembunyikan" /></div>
       </div>
       <div style={{marginBottom:10}}><label>🏦 Nomor rekening default (tampil di penawaran kalau tombol No. rekening dibuka)</label>
-        <textarea rows={3} value={qsDraft.bank||""} onChange={e=>setQsDraft(d=>({...d, bank:e.target.value}))} placeholder={"Contoh:\nPembayaran ke rekening PT. Berca Mandiri Perkasa\nBank Artha Graha Internasional, No. Rek. ..."} style={{width:"100%",fontFamily:"inherit"}} /></div>
+        <textarea rows={3} value={qsDraft.bank||""} onChange={e=>setQsDraft(d=>({...d, bank:e.target.value}))} placeholder={"Kosong = pakai rekening BCA bawaan:\n"+DEFAULT_BANK_TEXT} style={{width:"100%",fontFamily:"inherit"}} /></div>
       <label style={{display:"flex",alignItems:"center",gap:8,textTransform:"none",letterSpacing:0,fontSize:12.5,color:"var(--ink)"}}>
         <input type="checkbox" checked={!!qsDraft.watermark} onChange={e=>setQsDraft(d=>({...d, watermark:e.target.checked}))} style={{width:18,height:18}} />
         Tampilkan watermark logo Berca di dokumen penawaran
@@ -5775,8 +5778,8 @@ function MainApp({onDisconnect, binId}){
             <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={()=>setQuoHideOem(v=>!v)}>Tanda OEM: {quoHideOem ? "Tertutup" : "Terbuka"}</button>
             <button type="button" className="icon-btn" style={{fontWeight:700}} onClick={()=>setQuoHideBank(v=>!v)}>No. rekening: {quoHideBank ? "Tertutup" : "Terbuka"}</button>
             <label style={{fontSize:12,display:"flex",gap:5,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={quoAutoTrack} onChange={e=>setQuoAutoTrack(e.target.checked)} />Part indent / stock cabang otomatis masuk Tracking Part saat disimpan</label>
-            <span className="price-hint" style={{margin:0}}>{"Diskon: "+(quoHideDisc ? "tertutup (Unit Price di preview/PDF = harga net, baris DISC tidak tampil)" : "terbuka (diskon per part dan baris DISC tampil)")+". Stock: "+(quoHideStock ? "tertutup" : "terbuka (lokasi stock tampil)")+". OEM: "+(quoHideOem ? "tertutup" : "terbuka (tulisan Part OEM tampil)")+". Info diskon, stock, dan OEM tetap terlihat di form ini. No. rekening: "+(quoHideBank ? "tertutup" : (quoBankShown ? "terbuka (tampil di bawah tabel)" : "terbuka, tapi teks rekening masih kosong"))+"."}</span>
-            <textarea rows={2} value={quoBankText} onChange={e=>setQuoBankText(e.target.value)} placeholder={(quoSettings.bank||"").trim() ? "Teks rekening khusus penawaran ini (kosongkan untuk pakai default dari Pengaturan):\n"+quoSettings.bank : "Teks rekening untuk penawaran ini, contoh: Bank Artha Graha Internasional, No. Rek. ... a.n. PT. Berca Mandiri Perkasa (bisa juga diisi default di Pengaturan penawaran)"} style={{flex:"1 1 100%",fontFamily:"inherit",fontSize:12}} />
+            <span className="price-hint" style={{margin:0}}>{"Diskon: "+(quoHideDisc ? "tertutup (Unit Price di preview/PDF = harga net, baris DISC tidak tampil)" : "terbuka (diskon per part dan baris DISC tampil)")+". Stock: "+(quoHideStock ? "tertutup" : "terbuka (lokasi stock tampil)")+". OEM: "+(quoHideOem ? "tertutup" : "terbuka (tulisan Part OEM tampil)")+". Info diskon, stock, dan OEM tetap terlihat di form ini. No. rekening: "+(quoHideBank ? "tertutup" : (quoBankShown ? "terbuka (tampil di bawah tabel)" : "terbuka"))+"."}</span>
+            <textarea rows={2} value={quoBankText} onChange={e=>setQuoBankText(e.target.value)} placeholder={"Rekening khusus penawaran ini (kosongkan = pakai default):\n"+((quoSettings.bank||"").trim() || DEFAULT_BANK_TEXT)} style={{flex:"1 1 100%",fontFamily:"inherit",fontSize:12}} />
           </div>
           <details className="no-print" style={{marginBottom:18}}>
             <summary style={{cursor:"pointer",fontFamily:"var(--sans)",fontWeight:700,fontSize:12.5}}>Pengaturan penawaran (PPN standar, cabang, masa berlaku, watermark)</summary>
@@ -5974,6 +5977,12 @@ function MainApp({onDisconnect, binId}){
                       <span style={{fontSize:11.5}}>%</span>
                       {Number(r.disc)>0 && Number(r.unitPrice)>0 && <span className="price-hint" style={{margin:0}}>Unit Price di penawaran: Rp {Math.round(Number(r.unitPrice)*(1-Math.min(100,Number(r.disc))/100)).toLocaleString("id-ID")} / unit (harga di penawaran)</span>}
                     </div>
+<div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                      <span style={{fontSize:11.5,fontWeight:700}}>Tampil di penawaran</span>
+                      <button type="button" className="icon-btn" style={{fontSize:11.5,fontWeight:700}} onClick={()=>updateQuoAisRow(idx,"hideStock",!r.hideStock)}>Lokasi stock: {r.hideStock ? "Disembunyikan" : (quoHideStock ? "Ikut tertutup" : "Tampil")}</button>
+                      <button type="button" className="icon-btn" style={{fontSize:11.5,fontWeight:700}} onClick={()=>updateQuoAisRow(idx,"hideDisc",!r.hideDisc)}>Diskon: {r.hideDisc ? "Disembunyikan" : (quoHideDisc ? "Ikut tertutup" : "Tampil")}</button>
+                      <span className="price-hint" style={{margin:0}}>Tombol keseluruhan di atas tetap jalan. Kalau terbuka, part yang disembunyikan di sini tetap tidak tampil (di layar form tetap kelihatan).</span>
+                    </div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
                       <input type="text" placeholder="No. Part lama / baru terkait (opsional, ikut tampil di penawaran)" value={r.supersede||""} onChange={e=>updateQuoAisRow(idx,"supersede",e.target.value.toUpperCase())} style={{fontSize:11.5,padding:"6px 9px",flex:"1 1 200px",minWidth:0}} />
                       {r.supersede && <select value={r.supKind||"replaces"} onChange={e=>updateQuoAisRow(idx,"supKind",e.target.value)} style={{fontSize:11.5,padding:"6px 9px",flex:"1 1 230px",minWidth:0}}>
@@ -6032,6 +6041,12 @@ function MainApp({onDisconnect, binId}){
                         <span style={{fontSize:11.5}}>%</span>
                         {Number(r.disc)>0 && Number(r.unitPrice)>0 && <span className="price-hint" style={{margin:0}}>Unit Price di penawaran: Rp {Math.round(Number(r.unitPrice)*(1-Math.min(100,Number(r.disc))/100)).toLocaleString("id-ID")} / unit (harga di penawaran)</span>}
                       </div>
+<div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                            <span style={{fontSize:11.5,fontWeight:700}}>Tampil di penawaran</span>
+                        <button type="button" className="icon-btn" style={{fontSize:11.5,fontWeight:700}} onClick={()=>sec.h.update(idx,"hideStock",!r.hideStock)}>Lokasi stock: {r.hideStock ? "Disembunyikan" : (quoHideStock ? "Ikut tertutup" : "Tampil")}</button>
+                        <button type="button" className="icon-btn" style={{fontSize:11.5,fontWeight:700}} onClick={()=>sec.h.update(idx,"hideDisc",!r.hideDisc)}>Diskon: {r.hideDisc ? "Disembunyikan" : (quoHideDisc ? "Ikut tertutup" : "Tampil")}</button>
+                        <span className="price-hint" style={{margin:0}}>Tombol keseluruhan di atas tetap jalan. Kalau terbuka, part yang disembunyikan di sini tetap tidak tampil (di layar form tetap kelihatan).</span>
+                    </div>
                       {sec.useDatalist && <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
                         <input type="text" placeholder="No. Part lama / baru terkait (opsional, ikut tampil di penawaran)" value={r.supersede||""} onChange={e=>sec.h.update(idx,"supersede",e.target.value.toUpperCase())} style={{fontSize:11.5,padding:"6px 9px",flex:"1 1 200px",minWidth:0}} />
                         {r.supersede && <select value={r.supKind||"replaces"} onChange={e=>sec.h.update(idx,"supKind",e.target.value)} style={{fontSize:11.5,padding:"6px 9px",flex:"1 1 230px",minWidth:0}}>
@@ -6461,7 +6476,7 @@ function MainApp({onDisconnect, binId}){
                 <tbody>
                   {quoAisView.rows.map((r,idx)=>(
                     <tr key={idx}>
-                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{r.dPct>0 ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
+                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && !r.hideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{(r.dPct>0 && !r.hideDisc) ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
                       <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
                       <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
                       <td style={{textAlign:"right"}}>{r.ext?("IDR "+r.ext.toLocaleString("id-ID")):""}</td>
