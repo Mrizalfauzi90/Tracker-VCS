@@ -6123,6 +6123,146 @@ function MainApp({onDisconnect, binId}){
             </React.Fragment>
           )}
 
+          <h2 className="section no-print" id="quoPreviewTop">Preview</h2>
+
+          {quoFormat==="ais" ? (
+            <div className="quo-preview-scroll">
+            <div id="quotationPrintArea" className="quo-doc quo-ais">
+              {quoSettings.watermark && <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />}
+              <div className="quo-ais-header-block">
+                <img src={BERCA_LOGO_B64} alt="BERCA" className="quo-logo-img" />
+                <div className="quo-ais-company">PT. BERCA<br/>MANDIRI PERKASA</div>
+              </div>
+              <div className="quo-title" style={{textAlign:"center",marginBottom:14}}>QUOTATION</div>
+              <div className="quo-ais-info">
+                <div className="quo-ais-info-col">
+                  <div><b>BRANCH</b> : {quoBranch}</div>
+                  <div><b>CUSTOMER</b> : {quoCustomerName}</div>
+                  <div><b>ADDRESS</b> : {quoAddress}</div>
+                  <div><b>PHONE</b> : {quoPhone}</div>
+                  <div><b>N.P.W.P</b> : </div>
+                  <div><b>DEL.ADDR</b> : {quoAddress}</div>
+                  <div><b>MODEL</b> : {quoModel}</div>
+                  <div><b>REMARKS</b> : {quoAttn}</div>
+                </div>
+                <div className="quo-ais-info-col">
+                  <div><b>DOCUMENT NO</b> : {quoDocNo}</div>
+                  <div><b>DOCUMENT DATE</b> : {quoDocDate ? new Date(quoDocDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'}) : ""}</div>
+                  <div><b>FAX</b> : </div>
+                  <div><b>CUSTOMER PO NO</b> : {quoCustPoNo}</div>
+                  <div><b>CURR</b> : IDR</div>
+                  <div><b>SERIAL NO</b> : {quoSN}</div>
+                </div>
+              </div>
+              <div className="quo-ais-note">
+                NOTE : HARGA DAPAT BERUBAH SEWAKTU-WAKTU TANPA PEMBERITAHUAN<br/>
+                &nbsp;&nbsp;&nbsp;PRICE IS SUBJECT TO CHANGE WITHOUT NOTICED
+                {quoAnyStock && !quoHideStock && <React.Fragment><br/>&nbsp;&nbsp;&nbsp;STOCK : KETERSEDIAAN STOCK DAPAT BERUBAH SEWAKTU-WAKTU</React.Fragment>}
+              </div>
+              <table className="quo-ais-table">
+                <thead><tr><th>NO.</th><th>AGC</th><th>PART NUMBER / DESCRIPTION</th><th>QTY</th><th>UNIT PRICE</th><th>EXT.PRICE</th></tr></thead>
+                <tbody>
+                  {quoAisView.rows.map((r,idx)=>(
+                    <tr key={idx}>
+                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && !r.hideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{(r.dPct>0 && !r.hideDisc) ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
+                      <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
+                      <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
+                      <td style={{textAlign:"right"}}>{r.ext?("IDR "+r.ext.toLocaleString("id-ID")):""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="quo-ais-summary">
+                <div><span>Total Value</span><span>IDR {quoAisView.totalValue.toLocaleString("id-ID")}</span></div>
+                {quoAisView.discAmt>0 && <div><span>{quoAisView.rowDiscSum>0 ? "Disc" : "Disc "+quoAisView.discPct+"%"}</span><span>IDR {Math.round(quoAisView.discAmt).toLocaleString("id-ID")}</span></div>}
+                {quoPpnExclude
+                  ? <div style={{justifyContent:"flex-end",fontStyle:"italic"}}><span>Exclude PPN</span></div>
+                  : (quoAisView.ppnPct>0 && <div><span>PPN {quoAisView.ppnPct}%</span><span>IDR {Math.round(quoAisView.ppn).toLocaleString("id-ID")}</span></div>)}
+                <div className="quo-ais-summary-total"><span>Total Value</span><span>IDR {Math.round(quoAisView.total).toLocaleString("id-ID")}</span></div>
+              </div>
+              <div className="quo-ais-signblock">
+                {!quoHideBank && quoBankShown && <div className="quo-bank">{quoBankShown}</div>}
+                <div className="quo-ais-footer-note">
+                  MOHON TULISKAN NAMA, ALAMAT, NO NPWP BERDASARKAN NPWP PERUSAHAAN SAUDARA PADA PURCHASE ORDER<br/>
+                  PLEASE SPECIFY EXACTLY THE COMPANY NAME, ADDRESS, NPWP NO. IN YOUR PURCHASE ORDER<br/>
+                  ACCORDING TO THE ONES DESIGNATED IN NPWP
+                </div>
+                <div className="quo-manual-sign-row">
+                  <div>PT. BERCA MANDIRI PERKASA</div>
+                  <div>CUSTOMER</div>
+                </div>
+                <div className="quo-manual-sign-space">{signerImg && <img src={signerImg} alt="" className="quo-sign-img" />}</div>
+                <div className="quo-manual-sign-name-row">
+                  <div>{signerName}</div>
+                  <div></div>
+                </div>
+              </div>
+            </div>
+            </div>
+          ) : (
+            <div className="quo-preview-scroll">
+            <div id="quotationPrintArea" className="quo-doc quo-manual">
+              {quoSettings.watermark && <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />}
+              <img src={BERCA_HEADER_B64} alt="PT. Berca Mandiri Perkasa" className="quo-manual-header-img" />
+              <div className="quo-title" style={{textAlign:"center",margin:"10px 0"}}>QUOTATION</div>
+              <div className="quo-manual-info">
+                <div>
+                  <div><b>BRANCH</b> : {quoBranch}</div>
+                  <div><b>CUSTOMER</b> : {quoCustomerName}</div>
+                  <div><b>ADDRESS</b> : {quoAddress}</div>
+                  <div><b>REMARKS</b> : {quoAttn}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div><b>DOCUMENT</b>: {quoDocNo}</div>
+                  {quoPrNo.trim() && <div><b>PR</b> : {quoPrNo.trim()}</div>}
+                  <div><b>DOC. DATE</b> : {quoDocDate ? new Date(quoDocDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'}) : ""}</div>
+                </div>
+              </div>
+              <div className="quo-manual-merk-row"><b>MERK :</b> {quoMerk} &nbsp;&nbsp;&nbsp; <b>MODEL :</b> {quoModel} &nbsp;&nbsp;&nbsp; <b>SN :</b> {quoSN}</div>
+
+              {renderManualSection("SPARE PARTS", quoManualView.spareParts, true)}
+              {renderManualSection("CONSUMABLE/COMMODITY", quoManualView.consumable, false)}
+              {renderManualSection("SERVICE", quoManualView.service, false)}
+              {quoScopeOn && quoScopeLines.length>0 && (
+                <table className="quo-manual-table">
+                  <thead><tr><th className="quo-manual-section-head">{quoScopeTitle}</th></tr></thead>
+                  <tbody><tr><td>{quoScopeLines.map((l,i)=><div key={i}>{l}</div>)}</td></tr></tbody>
+                </table>
+              )}
+              {quoScopeOn && (()=>{
+                const secs=[["SPARE PARTS",quoManualView.spareParts],["CONSUMABLE/COMMODITY",quoManualView.consumable],["SERVICE",quoManualView.service]].filter(x=>x[1].totalValue>0);
+                if(!secs.length) return null;
+                const grand=secs.reduce((a,x)=>a+x[1].total,0);
+                return (
+                  <table className="quo-manual-table">
+                    <thead><tr><th colSpan={2} className="quo-manual-section-head">TOTAL OVERALL QUOTATION VALUE ({(quoPpnExclude || (Number(quoPpnPct)||0)===0)?"EXCLUDE PPN":"INCLUDE PPN"})</th></tr></thead>
+                    <tbody>
+                      {secs.map(x=><tr key={x[0]}><td>{x[0]}</td><td style={{textAlign:"right",width:110}}>{Math.round(x[1].total).toLocaleString("id-ID")}</td></tr>)}
+                      <tr className="quo-manual-total-row"><td className="quo-manual-total-lbl quo-manual-grandtotal" style={{textAlign:"center"}}>GRAND TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(grand).toLocaleString("id-ID")}</td></tr>
+                    </tbody>
+                  </table>
+                );
+              })()}
+
+              <div className="quo-manual-signblock">
+                {quoScopeOn && quoTermsLines.length>0 && <div style={{fontSize:11,margin:"6px 0 8px 14px",lineHeight:1.5}}>{quoTermsLines.map((l,i)=><div key={i}>{l}</div>)}</div>}
+                {quoSettings.validity && !(quoScopeOn && quoTermsLines.length>0) && <div className="quo-manual-note-italic">{quoSettings.validity}</div>}
+                {quoAnyStock && !quoHideStock && <div className="quo-manual-note-italic">{STOCK_DISCLAIMER}</div>}
+                {!quoHideBank && quoBankShown && <div className="quo-bank">{quoBankShown}</div>}
+                <div className="quo-manual-sign-row">
+                  <div>PT. BERCA MANDIRI PERKASA</div>
+                  <div>DI SETUJUI CUSTOMER</div>
+                </div>
+                <div className="quo-manual-sign-space">{signerImg && <img src={signerImg} alt="" className="quo-sign-img" />}</div>
+                <div className="quo-manual-sign-name-row">
+                  <div>{signerName}</div>
+                  <div></div>
+                </div>
+              </div>
+            </div>
+            </div>
+          )}
+
           <div className="no-print" style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
             <button className="add-btn" style={{marginBottom:0}} onClick={exportQuotationToPdf}>Export ke PDF</button>
             <button className="icon-btn" onClick={saveQuotation}>{quoEditingId ? "Update Penawaran Tersimpan" : "Simpan Penawaran"}</button>
@@ -6435,145 +6575,6 @@ function MainApp({onDisconnect, binId}){
             {renderSignerCard(true)}
           </Panel>
 
-          <h2 className="section no-print" id="quoPreviewTop">Preview</h2>
-
-          {quoFormat==="ais" ? (
-            <div className="quo-preview-scroll">
-            <div id="quotationPrintArea" className="quo-doc quo-ais">
-              {quoSettings.watermark && <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />}
-              <div className="quo-ais-header-block">
-                <img src={BERCA_LOGO_B64} alt="BERCA" className="quo-logo-img" />
-                <div className="quo-ais-company">PT. BERCA<br/>MANDIRI PERKASA</div>
-              </div>
-              <div className="quo-title" style={{textAlign:"center",marginBottom:14}}>QUOTATION</div>
-              <div className="quo-ais-info">
-                <div className="quo-ais-info-col">
-                  <div><b>BRANCH</b> : {quoBranch}</div>
-                  <div><b>CUSTOMER</b> : {quoCustomerName}</div>
-                  <div><b>ADDRESS</b> : {quoAddress}</div>
-                  <div><b>PHONE</b> : {quoPhone}</div>
-                  <div><b>N.P.W.P</b> : </div>
-                  <div><b>DEL.ADDR</b> : {quoAddress}</div>
-                  <div><b>MODEL</b> : {quoModel}</div>
-                  <div><b>REMARKS</b> : {quoAttn}</div>
-                </div>
-                <div className="quo-ais-info-col">
-                  <div><b>DOCUMENT NO</b> : {quoDocNo}</div>
-                  <div><b>DOCUMENT DATE</b> : {quoDocDate ? new Date(quoDocDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'}) : ""}</div>
-                  <div><b>FAX</b> : </div>
-                  <div><b>CUSTOMER PO NO</b> : {quoCustPoNo}</div>
-                  <div><b>CURR</b> : IDR</div>
-                  <div><b>SERIAL NO</b> : {quoSN}</div>
-                </div>
-              </div>
-              <div className="quo-ais-note">
-                NOTE : HARGA DAPAT BERUBAH SEWAKTU-WAKTU TANPA PEMBERITAHUAN<br/>
-                &nbsp;&nbsp;&nbsp;PRICE IS SUBJECT TO CHANGE WITHOUT NOTICED
-                {quoAnyStock && !quoHideStock && <React.Fragment><br/>&nbsp;&nbsp;&nbsp;STOCK : KETERSEDIAAN STOCK DAPAT BERUBAH SEWAKTU-WAKTU</React.Fragment>}
-              </div>
-              <table className="quo-ais-table">
-                <thead><tr><th>NO.</th><th>AGC</th><th>PART NUMBER / DESCRIPTION</th><th>QTY</th><th>UNIT PRICE</th><th>EXT.PRICE</th></tr></thead>
-                <tbody>
-                  {quoAisView.rows.map((r,idx)=>(
-                    <tr key={idx}>
-                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && !r.hideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{(r.dPct>0 && !r.hideDisc) ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
-                      <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
-                      <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
-                      <td style={{textAlign:"right"}}>{r.ext?("IDR "+r.ext.toLocaleString("id-ID")):""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="quo-ais-summary">
-                <div><span>Total Value</span><span>IDR {quoAisView.totalValue.toLocaleString("id-ID")}</span></div>
-                {quoAisView.discAmt>0 && <div><span>{quoAisView.rowDiscSum>0 ? "Disc" : "Disc "+quoAisView.discPct+"%"}</span><span>IDR {Math.round(quoAisView.discAmt).toLocaleString("id-ID")}</span></div>}
-                {quoPpnExclude
-                  ? <div style={{justifyContent:"flex-end",fontStyle:"italic"}}><span>Exclude PPN</span></div>
-                  : (quoAisView.ppnPct>0 && <div><span>PPN {quoAisView.ppnPct}%</span><span>IDR {Math.round(quoAisView.ppn).toLocaleString("id-ID")}</span></div>)}
-                <div className="quo-ais-summary-total"><span>Total Value</span><span>IDR {Math.round(quoAisView.total).toLocaleString("id-ID")}</span></div>
-              </div>
-              <div className="quo-ais-signblock">
-                {!quoHideBank && quoBankShown && <div className="quo-bank">{quoBankShown}</div>}
-                <div className="quo-ais-footer-note">
-                  MOHON TULISKAN NAMA, ALAMAT, NO NPWP BERDASARKAN NPWP PERUSAHAAN SAUDARA PADA PURCHASE ORDER<br/>
-                  PLEASE SPECIFY EXACTLY THE COMPANY NAME, ADDRESS, NPWP NO. IN YOUR PURCHASE ORDER<br/>
-                  ACCORDING TO THE ONES DESIGNATED IN NPWP
-                </div>
-                <div className="quo-manual-sign-row">
-                  <div>PT. BERCA MANDIRI PERKASA</div>
-                  <div>CUSTOMER</div>
-                </div>
-                <div className="quo-manual-sign-space">{signerImg && <img src={signerImg} alt="" className="quo-sign-img" />}</div>
-                <div className="quo-manual-sign-name-row">
-                  <div>{signerName}</div>
-                  <div></div>
-                </div>
-              </div>
-            </div>
-            </div>
-          ) : (
-            <div className="quo-preview-scroll">
-            <div id="quotationPrintArea" className="quo-doc quo-manual">
-              {quoSettings.watermark && <img src={BERCA_WATERMARK_B64} alt="" className="quo-watermark" />}
-              <img src={BERCA_HEADER_B64} alt="PT. Berca Mandiri Perkasa" className="quo-manual-header-img" />
-              <div className="quo-title" style={{textAlign:"center",margin:"10px 0"}}>QUOTATION</div>
-              <div className="quo-manual-info">
-                <div>
-                  <div><b>BRANCH</b> : {quoBranch}</div>
-                  <div><b>CUSTOMER</b> : {quoCustomerName}</div>
-                  <div><b>ADDRESS</b> : {quoAddress}</div>
-                  <div><b>REMARKS</b> : {quoAttn}</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div><b>DOCUMENT</b>: {quoDocNo}</div>
-                  {quoPrNo.trim() && <div><b>PR</b> : {quoPrNo.trim()}</div>}
-                  <div><b>DOC. DATE</b> : {quoDocDate ? new Date(quoDocDate+"T00:00:00").toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'}) : ""}</div>
-                </div>
-              </div>
-              <div className="quo-manual-merk-row"><b>MERK :</b> {quoMerk} &nbsp;&nbsp;&nbsp; <b>MODEL :</b> {quoModel} &nbsp;&nbsp;&nbsp; <b>SN :</b> {quoSN}</div>
-
-              {renderManualSection("SPARE PARTS", quoManualView.spareParts, true)}
-              {renderManualSection("CONSUMABLE/COMMODITY", quoManualView.consumable, false)}
-              {renderManualSection("SERVICE", quoManualView.service, false)}
-              {quoScopeOn && quoScopeLines.length>0 && (
-                <table className="quo-manual-table">
-                  <thead><tr><th className="quo-manual-section-head">{quoScopeTitle}</th></tr></thead>
-                  <tbody><tr><td>{quoScopeLines.map((l,i)=><div key={i}>{l}</div>)}</td></tr></tbody>
-                </table>
-              )}
-              {quoScopeOn && (()=>{
-                const secs=[["SPARE PARTS",quoManualView.spareParts],["CONSUMABLE/COMMODITY",quoManualView.consumable],["SERVICE",quoManualView.service]].filter(x=>x[1].totalValue>0);
-                if(!secs.length) return null;
-                const grand=secs.reduce((a,x)=>a+x[1].total,0);
-                return (
-                  <table className="quo-manual-table">
-                    <thead><tr><th colSpan={2} className="quo-manual-section-head">TOTAL OVERALL QUOTATION VALUE ({(quoPpnExclude || (Number(quoPpnPct)||0)===0)?"EXCLUDE PPN":"INCLUDE PPN"})</th></tr></thead>
-                    <tbody>
-                      {secs.map(x=><tr key={x[0]}><td>{x[0]}</td><td style={{textAlign:"right",width:110}}>{Math.round(x[1].total).toLocaleString("id-ID")}</td></tr>)}
-                      <tr className="quo-manual-total-row"><td className="quo-manual-total-lbl quo-manual-grandtotal" style={{textAlign:"center"}}>GRAND TOTAL</td><td className="quo-manual-total-val quo-manual-grandtotal">{Math.round(grand).toLocaleString("id-ID")}</td></tr>
-                    </tbody>
-                  </table>
-                );
-              })()}
-
-              <div className="quo-manual-signblock">
-                {quoScopeOn && quoTermsLines.length>0 && <div style={{fontSize:11,margin:"6px 0 8px 14px",lineHeight:1.5}}>{quoTermsLines.map((l,i)=><div key={i}>{l}</div>)}</div>}
-                {quoSettings.validity && !(quoScopeOn && quoTermsLines.length>0) && <div className="quo-manual-note-italic">{quoSettings.validity}</div>}
-                {quoAnyStock && !quoHideStock && <div className="quo-manual-note-italic">{STOCK_DISCLAIMER}</div>}
-                {!quoHideBank && quoBankShown && <div className="quo-bank">{quoBankShown}</div>}
-                <div className="quo-manual-sign-row">
-                  <div>PT. BERCA MANDIRI PERKASA</div>
-                  <div>DI SETUJUI CUSTOMER</div>
-                </div>
-                <div className="quo-manual-sign-space">{signerImg && <img src={signerImg} alt="" className="quo-sign-img" />}</div>
-                <div className="quo-manual-sign-name-row">
-                  <div>{signerName}</div>
-                  <div></div>
-                </div>
-              </div>
-            </div>
-            </div>
-          )}
         </React.Fragment>
       )}
 
@@ -6684,7 +6685,7 @@ function MainApp({onDisconnect, binId}){
                                 </td>
                                 <td style={tr}>
                                   {v.missing ? <input type="number" placeholder="isi manual" style={{width:120,padding:"2px 6px",fontSize:12}} onBlur={e=>{ const n=Number(e.target.value); if(n>0) incPatch([it.id],{incValue:Math.round(n)}); }} />
-                                   : <span>{numID(v.val)}{v.manual && <span className="meta"> (manual)</span>}</span>}
+                                   : <span>{numID(v.val)}{v.manual && <span className="meta"> (manual)</span>} <span className="icon-btn" style={{fontSize:11,padding:"2px 8px",marginLeft:6}} onClick={()=>{ const cur=v.manual?String(v.val):""; const r=window.prompt("Nilai baru (sebelum PPN) untuk "+(it.desc||it.partNo||"part")+".\nKosongkan lalu OK = kembali ke hitungan otomatis.", cur); if(r===null) return; const n=Math.round(Number(String(r).replace(/[^0-9.]/g,""))||0); incPatch([it.id],{incValue:n>0?n:0}); }}>Ubah</span></span>}
                                 </td>
                                 <td style={td}><input type="text" style={{width:"100%",minWidth:140,padding:"2px 6px",fontSize:12}} defaultValue={it.incNote||""} placeholder="mis. PSO belum di-TTD user" onBlur={e=>{ if((e.target.value||"")!==(it.incNote||"")) incPatch([it.id],{incNote:e.target.value}); }} /></td>
                               </tr>
