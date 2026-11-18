@@ -2123,8 +2123,8 @@ function MainApp({onDisconnect, binId}){
     reader.readAsText(file);
   };
 
-  const [year,setYear] = useState(2026);
-  const [qId,setQId] = useState("Q3");
+  const [year,setYear] = useState(()=> new Date().getFullYear());
+  const [qId,setQId] = useState(()=> quarterKeyForDate(localISO(new Date())).qId);
   const [profile,setProfile] = useState(DEFAULT_PROFILE);
   const [profileLoaded,setProfileLoaded] = useState(false);
   const [editingProfile,setEditingProfile] = useState(false);
