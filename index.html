@@ -3322,13 +3322,13 @@ function MainApp({onDisconnect, binId}){
     if(newFormat===quoFormat) return;
     if(newFormat==="manual" && quoFormat==="ais"){
       // Format AIS -> Manual: pindahkan isi Rincian Part AIS ke section SPARE PARTS
-      const converted = quoAisRows.filter(r=>r.desc && r.desc.trim()).map(r=>({agc:r.agc||"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, remark:"", supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
+      const converted = quoAisRows.filter(r=>r.desc && r.desc.trim()).map(r=>({agc:r.agc||"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, remark:r.remark||"", supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
       if(converted.length) setQuoSpareParts(converted);
     } else if(newFormat==="ais" && quoFormat==="manual"){
       // Format Manual -> AIS: gabungkan Spare Parts + Consumable + Service jadi satu tabel AIS
       const allRows = [...quoSpareParts, ...quoConsumable, ...quoService]
         .filter(r=>r.desc && r.desc.trim())
-        .map(r=>({agc:r.agc||"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
+        .map(r=>({agc:r.agc||"24", desc:r.desc, qty:r.qty, unitPrice:r.unitPrice, remark:r.remark||"", supersede:r.supersede||"", supKind:r.supKind||"", stocks:r.stocks||[], stockLoc:r.stockLoc||"", stockDetail:r.stockDetail||"", stockDays:r.stockDays||""}));
       if(allRows.length) setQuoAisRows(allRows);
     }
     setQuoFormat(newFormat);
@@ -6003,6 +6003,9 @@ function MainApp({onDisconnect, binId}){
                         <option value="replacedBy">Part ini di-SUPERSEDE menjadi No. Part baru</option>
                       </select>}
                     </div></div>
+                    <div className="part-sub"><div className="part-sub-label">Remark (tampil di bawah nama part di penawaran)</div>
+                      <input type="text" placeholder="mis. Stock habis, indent 3 minggu / Barang tidak tersedia / Pengganti genuine" value={r.remark||""} onChange={e=>updateQuoAisRow(idx,"remark",e.target.value)} style={{width:"100%",fontSize:11.5,padding:"6px 9px"}} />
+                    </div>
                     <div className="part-sub"><div className="part-sub-label">Stock / Indent</div>{renderStockInputs(r, (f,v)=>updateQuoAisRow(idx,f,v), setAisStockAll)}</div>
                   </div>
                   );
@@ -6180,7 +6183,7 @@ function MainApp({onDisconnect, binId}){
                 <tbody>
                   {quoAisView.rows.map((r,idx)=>(
                     <tr key={idx}>
-                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && !r.hideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{(r.dPct>0 && !r.hideDisc) ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}</td>
+                      <td>{idx+1}</td><td>{r.agc}</td><td>{r.desc}{r.supersede ? <div className="quo-supersede">{supLabel(r.supKind)} : {r.supersede}</div> : null}{(!quoHideOem && isOemRow(r)) ? <div className="quo-stock">Part OEM</div> : null}{(!quoHideStock && !r.hideStock && stockText(r)) ? <div className="quo-stock">{stockText(r)}</div> : null}{(r.dPct>0 && !r.hideDisc) ? <div className="quo-stock">Diskon {r.dPct}%</div> : null}{(r.remark||"").trim() ? <div className="quo-stock">{"Remark : "+r.remark.trim()}</div> : null}</td>
                       <td style={{textAlign:"right"}}>{r.qtyNum||""}</td>
                       <td style={{textAlign:"right"}}>{r.priceNum?r.priceNum.toLocaleString("id-ID"):""}</td>
                       <td style={{textAlign:"right"}}>{r.ext?("IDR "+r.ext.toLocaleString("id-ID")):""}</td>
